@@ -1,0 +1,33 @@
+from pydantic import BaseModel, Field
+from typing import TypedDict, List, Optional, Dict, Any
+
+class ProblemAudit(BaseModel):
+    is_valid: bool = Field(..., description="True if mathematically possible. False if flawed.")
+    flaw_reasoning: str = Field(..., description="Explanation of why it failed, or 'Valid'.")
+
+class CurriculumOutput(BaseModel):
+    domain: str = Field(..., description="Engineering sector, e.g., 'C++ Memory', 'Aerospace'.")
+    target_language: str = Field(..., description="Programming language, e.g., 'python', 'cpp'.")
+    problem_statement: str = Field(..., description="Detailed engineering problem.")
+    difficulty_level: str = Field(..., description="Complexity: 'Moderate', 'Advanced', 'Elite'.")
+    hidden_unit_tests: str = Field(..., description="Mathematical proofs or logic tests.")
+
+class AgenticState(TypedDict):
+    """The Universal Data Bus for the Swarm Architecture."""
+    current_topic: str           
+    domain: str                  
+    target_language: str
+    problem_statement: str
+    difficulty_level: str
+    hidden_unit_tests: str 
+    
+    problem_is_valid: bool       
+    audit_feedback: str    
+    
+    proposed_code: Optional[str] 
+    red_team_critique: Optional[str] 
+    execution_success: bool          
+    traceback: Optional[str]        
+    
+    rca_history: List[Dict[str, Any]]      
+    iteration_count: int

@@ -1,0 +1,15 @@
+stages:
+  - generate
+
+generate_traces:
+  stage: generate
+  image: python:3.10
+  parallel:
+    matrix:
+      - CHUNK: [3, 4, 5] 
+  script:
+    # UPDATED PIP INSTALL LINE
+    - pip install langgraph langchain-core langchain-groq langchain-google-genai langchain-cohere langchain-openai langchain-mistralai pydantic chromadb tenacity huggingface_hub
+    - python main.py --chunk $CHUNK --total-chunks 9
+    - python utils/sanitizer.py
+    - huggingface-cli upload $HF_USERNAME/Agentic-Reasoning-Data dataset/clean_training_data.jsonl data/gitlab_chunk_${CHUNK}.jsonl --repo-type dataset

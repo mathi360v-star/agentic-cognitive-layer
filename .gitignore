@@ -1,0 +1,21 @@
+# Security (CRITICAL)
+.env
+*.env
+
+# Environments
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# Local Memory & Databases
+memory/error_memory_db/
+*.sqlite3
+
+# Local Datasets
+dataset/
+*.jsonl
+*.zip
+
+# OS Files
+.DS_Store

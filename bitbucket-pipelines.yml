@@ -1,0 +1,31 @@
+image: python:3.10
+
+definitions:
+  steps:
+    - step: &run-chunk
+        script:
+          # UPDATED PIP INSTALL LINE
+          - pip install langgraph langchain-core langchain-groq langchain-google-genai langchain-cohere langchain-openai langchain-mistralai pydantic chromadb tenacity huggingface_hub
+          - python main.py --chunk $CHUNK_ID --total-chunks 9
+          - python utils/sanitizer.py
+          - huggingface-cli upload $HF_USERNAME/Agentic-Reasoning-Data dataset/clean_training_data.jsonl data/bitbucket_chunk_${CHUNK_ID}.jsonl --repo-type dataset
+
+pipelines:
+  custom:
+    swarm-run:
+      - parallel:
+          - step:
+              <<: *run-chunk
+              name: Chunk 6
+              env:
+                CHUNK_ID: '6'
+          - step:
+              <<: *run-chunk
+              name: Chunk 7
+              env:
+                CHUNK_ID: '7'
+          - step:
+              <<: *run-chunk
+              name: Chunk 8
+              env:
+                CHUNK_ID: '8'
