@@ -41,20 +41,32 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      # CRITICAL FIX: Initialize Python in this job so the system path is correct
       - uses: actions/setup-python@v5
         with: { python-version: '3.10' }
         
       - uses: actions/download-artifact@v4
         with: { pattern: dataset-chunk-*, path: all_chunks }
         
-      - run: |
-          mkdir -p final_dataset
-          cat all_chunks/*/*.jsonl > final_dataset/github_data.jsonl || true
+      - name: Enterprise Data Merger & Diagnostic
+        run: |
+          echo "[*] Displaying downloaded artifacts from the Swarm:"
+          ls -R all_chunks/
           
-      - env:
+          mkdir -p final_dataset
+          
+          # Enterprise Find-and-Merge: Safely grabs all .jsonl files no matter the folder structure
+          find all_chunks -name "*.jsonl" -exec cat {} + > final_dataset/github_data.jsonl
+          
+          echo "[*] === MERGE COMPLETE ==="
+          echo "Total Golden Traces Harvested in this run:"
+          wc -l final_dataset/github_data.jsonl
+          
+      - name: Secure Push to Hugging Face
+        env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
         run: |
           pip install huggingface_hub
+          # Explicitly authenticate with the CLI first to prevent 401 Unauthorized drops
+          huggingface-cli login --token $HF_TOKEN --add-to-git-credential
           huggingface-cli upload $HF_USERNAME/Agentic-Reasoning-Data final_dataset/github_data.jsonl data/github_data.jsonl --repo-type dataset
