@@ -19,8 +19,8 @@ def build_llm_pool() -> list:
     sambanova_keys = [k.strip() for k in os.getenv("SAMBANOVA_API_KEYS", "").split(",") if k.strip()]
     mistral_keys = [k.strip() for k in os.getenv("MISTRAL_API_KEYS", "").split(",") if k.strip()]
 
-    # Print a diagnostic boot message to the GitHub logs
-    print(f"[SYSTEM] Loaded Keys -> Groq:{len(groq_keys)} | Gemini:{len(google_keys)} | Cohere:{len(cohere_keys)} | Cerebras:{len(cerebras_keys)}")
+    # DIAGNOSTIC BOOT MESSAGE
+    print(f"\n[SYSTEM BOOT] Loaded Keys -> Groq:{len(groq_keys)} | Gemini:{len(google_keys)} | Cohere:{len(cohere_keys)} | Cerebras:{len(cerebras_keys)} | SambaNova:{len(sambanova_keys)} | Mistral:{len(mistral_keys)}\n")
 
     for key in groq_keys: 
         pool.append(ChatGroq(api_key=key, model_name="llama3-70b-8192", max_retries=0))
@@ -56,9 +56,9 @@ async def safe_async_invoke(messages: list, temperature: float = 0.2) -> str:
             response = await bound_llm.ainvoke(messages)
             return response.content
         except Exception as e:
-            # THIS IS THE CRITICAL CHANGE: Print the exact error string
-            error_msg = str(e).replace('\n', ' ')[:150] # Truncate so it doesn't flood the logs
-            print(f"[!] {model_name} failed. Error: {error_msg}...")
+            # DIAGNOSTIC ERROR EXTRACTION
+            error_msg = str(e).replace('\n', ' ')[:150] 
+            print(f"[!] {model_name} failed. EXACT ERROR: {error_msg}...")
             last_exception = e
             continue 
 
