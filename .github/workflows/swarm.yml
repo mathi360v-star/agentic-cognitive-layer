@@ -29,9 +29,7 @@ jobs:
           SAMBANOVA_API_KEYS: ${{ secrets.SAMBANOVA_API_KEYS }}
           MISTRAL_API_KEYS: ${{ secrets.MISTRAL_API_KEYS }}
         run: |
-          # 1. Run the AI generation loop
           python main.py --chunk ${{ matrix.chunk }} --total-chunks 9
-          # 2. Clean the generated traces
           python utils/sanitizer.py
 
       - name: Direct-to-Vault Upload
@@ -39,17 +37,19 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
         run: |
-          # The -s flag checks if the file actually has byte size (prevents ghost files)
-          if [ -s dataset/clean_training_data.jsonl ]; then
-            echo "[*] Golden data detected. Connecting to Hugging Face..."
-            
-            # The Random Jitter: Sleeps between 1 and 10 seconds to prevent HF API locking
+          # GATE 2: Count the exact number of verified JSON lines in the file
+          # The "|| echo 0" prevents the script from crashing if the file is completely missing
+          VALID_LINES=$(wc -l < dataset/clean_training_data.jsonl 2>/dev/null || echo 0)
+          
+          echo "[SYSTEM] Detected $VALID_LINES verified traces ready for upload."
+
+          if [ "$VALID_LINES" -gt 0 ]; then
+            echo "[*] Connecting to Hugging Face..."
             sleep $((RANDOM % 10 + 1))
             
-            # Upload uniquely named file (e.g., github_chunk_0.jsonl)
             huggingface-cli upload $HF_USERNAME/Agentic-Reasoning-Data dataset/clean_training_data.jsonl data/github_chunk_${{ matrix.chunk }}.jsonl --repo-type dataset
             
-            echo "[+] Upload complete."
+            echo "[+] Upload complete. Data secured."
           else
-            echo "[-] No valid traces generated in this run. Skipping upload to protect vault integrity."
+            echo "[-] Zero verified traces detected. Vault locked. Skipping upload to prevent data corruption."
           fi
