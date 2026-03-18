@@ -37,8 +37,7 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
         run: |
-          # GATE 2: Count the exact number of verified JSON lines in the file
-          # The "|| echo 0" prevents the script from crashing if the file is completely missing
+          # GATE 2: Count the exact number of verified JSON lines
           VALID_LINES=$(wc -l < dataset/clean_training_data.jsonl 2>/dev/null || echo 0)
           
           echo "[SYSTEM] Detected $VALID_LINES verified traces ready for upload."
@@ -47,7 +46,9 @@ jobs:
             echo "[*] Connecting to Hugging Face..."
             sleep $((RANDOM % 10 + 1))
             
-            huggingface-cli upload $HF_USERNAME/Agentic-Reasoning-Data dataset/clean_training_data.jsonl data/github_chunk_${{ matrix.chunk }}.jsonl --repo-type dataset
+            # CRITICAL FIX: Ensure the CLI is explicitly installed in this shell and invoke via Python
+            pip install -U "huggingface_hub[cli]"
+            python -m huggingface_hub.cli upload $HF_USERNAME/Agentic-Reasoning-Data dataset/clean_training_data.jsonl data/github_chunk_${{ matrix.chunk }}.jsonl --repo-type dataset
             
             echo "[+] Upload complete. Data secured."
           else

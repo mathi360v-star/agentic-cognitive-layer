@@ -38,7 +38,7 @@ def build_llm_pool() -> list:
         
     for key in cerebras_keys: 
         # Reverted to 3.1 for Cerebras stability
-        pool.append(ChatOpenAI(api_key=key, base_url="https://api.cerebras.ai/v1", model_name="llama3.1-70b", max_retries=0))
+        pool.append(ChatOpenAI(api_key=key, base_url="https://api.cerebras.ai/v1", model_name="llama-3.3-70b", max_retries=0))
         
     for key in sambanova_keys: 
         # SambaNova's fast 8B instruct model is much more stable than their 70B
