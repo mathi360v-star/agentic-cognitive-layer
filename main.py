@@ -121,5 +121,7 @@ if __name__ == "__main__":
     parser.add_argument("--total-chunks", type=int, default=1, help="Total number of chunks")
     args = parser.parse_args()
     
+    # GUARANTEE THE FOLDER EXISTS BEFORE THE AI WRITES TO IT
     os.makedirs("dataset", exist_ok=True)
+    
     asyncio.run(main(args.chunk, args.total_chunks))
