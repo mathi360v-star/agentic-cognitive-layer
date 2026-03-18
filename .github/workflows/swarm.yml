@@ -36,6 +36,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
+          CHUNK_ID: ${{ matrix.chunk }}
         run: |
           # GATE 2: Count the exact number of verified JSON lines
           VALID_LINES=$(wc -l < dataset/clean_training_data.jsonl 2>/dev/null || echo 0)
@@ -43,14 +44,39 @@ jobs:
           echo "[SYSTEM] Detected $VALID_LINES verified traces ready for upload."
 
           if [ "$VALID_LINES" -gt 0 ]; then
-            echo "[*] Connecting to Hugging Face..."
-            sleep $((RANDOM % 10 + 1))
+            echo "[*] Connecting to Hugging Face via Pure Python API..."
+            sleep $((RANDOM % 5 + 1))
             
-            # CRITICAL FIX: Ensure the CLI is explicitly installed in this shell and invoke via Python
-            pip install -U "huggingface_hub[cli]"
-            python -m huggingface_hub.cli upload $HF_USERNAME/Agentic-Reasoning-Data dataset/clean_training_data.jsonl data/github_chunk_${{ matrix.chunk }}.jsonl --repo-type dataset
+            # Indestructible Python Script Injection (Heredoc)
+            cat << 'EOF' > upload_to_hf.py
+import os
+import sys
+from huggingface_hub import HfApi
+
+try:
+    api = HfApi()
+    repo_id = f"{os.environ['HF_USERNAME']}/Agentic-Reasoning-Data"
+    chunk_id = os.environ['CHUNK_ID']
+    file_path = f"data/github_chunk_{chunk_id}.jsonl"
+    
+    print(f"[*] Uploading to {repo_id} -> {file_path}...")
+    
+    api.upload_file(
+        path_or_fileobj="dataset/clean_training_data.jsonl",
+        path_in_repo=file_path,
+        repo_id=repo_id,
+        repo_type="dataset",
+        token=os.environ['HF_TOKEN']
+    )
+    print("[+] PURE PYTHON UPLOAD COMPLETE. Data is secured in the vault.")
+except Exception as e:
+    print(f"[!] CRITICAL UPLOAD ERROR: {e}")
+    sys.exit(1)
+EOF
             
-            echo "[+] Upload complete. Data secured."
+            # Execute the safely generated Python script
+            python upload_to_hf.py
+            
           else
             echo "[-] Zero verified traces detected. Vault locked. Skipping upload to prevent data corruption."
           fi
