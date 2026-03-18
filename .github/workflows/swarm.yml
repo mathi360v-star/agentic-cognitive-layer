@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  generate_traces:
+  generate_and_stream:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -13,14 +13,15 @@ jobs:
         chunk: [0, 1, 2] 
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/setup-python@v5
         with: { python-version: '3.10' }
-      
-      # UPDATED PIP INSTALL LINE
-      - run: pip install langgraph langchain-core langchain-groq langchain-google-genai langchain-cohere langchain-openai langchain-mistralai pydantic chromadb tenacity huggingface_hub
-      
-      # CRITICAL UPDATE: Added SambaNova and Mistral to the environment map
-      - env:
+        
+      - name: Install Dependencies
+        run: pip install langgraph langchain-core langchain-groq langchain-google-genai langchain-cohere langchain-openai langchain-mistralai pydantic chromadb tenacity huggingface_hub
+        
+      - name: Execute Swarm Logic
+        env:
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
           GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
           COHERE_API_KEYS: ${{ secrets.COHERE_API_KEYS }}
@@ -28,43 +29,27 @@ jobs:
           SAMBANOVA_API_KEYS: ${{ secrets.SAMBANOVA_API_KEYS }}
           MISTRAL_API_KEYS: ${{ secrets.MISTRAL_API_KEYS }}
         run: |
+          # 1. Run the AI generation loop
           python main.py --chunk ${{ matrix.chunk }} --total-chunks 9
+          # 2. Clean the generated traces
           python utils/sanitizer.py
-          
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dataset-chunk-${{ matrix.chunk }}
-          path: dataset/clean_training_data.jsonl
 
-  push_to_huggingface:
-    needs: generate_traces
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.10' }
-        
-      - uses: actions/download-artifact@v4
-        with: { pattern: dataset-chunk-*, path: all_chunks }
-        
-      - name: Safely Merge Data
-        run: |
-          mkdir -p final_dataset
-          mkdir -p all_chunks # Prevents "No such directory" crash
-          
-          # Safely find and merge all JSONL files. Will not crash if empty.
-          find all_chunks -type f -name "*.jsonl" -exec cat {} + > final_dataset/github_data.jsonl || true
-          
-      - name: Push to Hugging Face
+      - name: Direct-to-Vault Upload
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
         run: |
-          # Only upload if the file actually has data in it (-s checks if file size > 0)
-          if [ -s final_dataset/github_data.jsonl ]; then
-            pip install huggingface_hub
-            huggingface-cli upload $HF_USERNAME/Agentic-Reasoning-Data final_dataset/github_data.jsonl data/github_data.jsonl --repo-type dataset
-            echo "Data successfully pushed to Hugging Face!"
+          # The -s flag checks if the file actually has byte size (prevents ghost files)
+          if [ -s dataset/clean_training_data.jsonl ]; then
+            echo "[*] Golden data detected. Connecting to Hugging Face..."
+            
+            # The Random Jitter: Sleeps between 1 and 10 seconds to prevent HF API locking
+            sleep $((RANDOM % 10 + 1))
+            
+            # Upload uniquely named file (e.g., github_chunk_0.jsonl)
+            huggingface-cli upload $HF_USERNAME/Agentic-Reasoning-Data dataset/clean_training_data.jsonl data/github_chunk_${{ matrix.chunk }}.jsonl --repo-type dataset
+            
+            echo "[+] Upload complete."
           else
-            echo "No data generated in this batch. Skipping Hugging Face upload to save bandwidth."
+            echo "[-] No valid traces generated in this run. Skipping upload to protect vault integrity."
           fi

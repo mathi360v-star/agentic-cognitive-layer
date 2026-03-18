@@ -10,15 +10,15 @@ def clean_code_block(code: str) -> str:
 def sanitize_dataset():
     print("\n--- Starting Data Deep-Sanitization ---")
     
-    # CRITICAL FIX: Absolute path resolution
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    DATASET_DIR = os.path.join(BASE_DIR, "dataset")
-    RAW_DATA_PATH = os.path.join(DATASET_DIR, "training_traces.jsonl")
-    CLEAN_DATA_PATH = os.path.join(DATASET_DIR, "clean_training_data.jsonl")
+    # 1. Force the creation of the dataset directory to prevent path crashes
+    os.makedirs("dataset", exist_ok=True)
+    
+    RAW_DATA_PATH = "dataset/training_traces.jsonl"
+    CLEAN_DATA_PATH = "dataset/clean_training_data.jsonl"
 
     if not os.path.exists(RAW_DATA_PATH):
-        print(f"[-] No raw traces found at {RAW_DATA_PATH}. Skipping.")
-        # Create an empty clean file so GitHub Actions doesn't crash looking for it
+        print(f"[-] FATAL: No raw traces found. The AI did not harvest any valid solutions this round.")
+        # Create an empty file so the pipeline doesn't crash, but it will be ignored by the uploader
         open(CLEAN_DATA_PATH, 'a').close() 
         return
 
@@ -28,6 +28,7 @@ def sanitize_dataset():
          open(CLEAN_DATA_PATH, 'w', encoding='utf-8') as outfile:
         
         for line in infile:
+            if not line.strip(): continue
             try:
                 trace = json.loads(line)
                 problem = trace.get("problem", "")
@@ -53,7 +54,8 @@ def sanitize_dataset():
                 outfile.write(json.dumps(formatted_trace) + "\n")
                 valid_traces += 1
                 
-            except Exception:
+            except Exception as e:
+                print(f"[!] Sanitizer caught a malformed line: {e}")
                 pass 
 
     print(f"[+] Sanitization Complete! {valid_traces} Golden Traces extracted to {CLEAN_DATA_PATH}.")
