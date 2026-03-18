@@ -47,26 +47,24 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { pattern: dataset-chunk-*, path: all_chunks }
         
-      - name: Enterprise Data Merger & Diagnostic
+      - name: Safely Merge Data
         run: |
-          echo "[*] Displaying downloaded artifacts from the Swarm:"
-          ls -R all_chunks/
-          
           mkdir -p final_dataset
+          mkdir -p all_chunks # Prevents "No such directory" crash
           
-          # Enterprise Find-and-Merge: Safely grabs all .jsonl files no matter the folder structure
-          find all_chunks -name "*.jsonl" -exec cat {} + > final_dataset/github_data.jsonl
+          # Safely find and merge all JSONL files. Will not crash if empty.
+          find all_chunks -type f -name "*.jsonl" -exec cat {} + > final_dataset/github_data.jsonl || true
           
-          echo "[*] === MERGE COMPLETE ==="
-          echo "Total Golden Traces Harvested in this run:"
-          wc -l final_dataset/github_data.jsonl
-          
-      - name: Secure Push to Hugging Face
+      - name: Push to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
         run: |
-          pip install huggingface_hub
-          # Explicitly authenticate with the CLI first to prevent 401 Unauthorized drops
-          huggingface-cli login --token $HF_TOKEN --add-to-git-credential
-          huggingface-cli upload $HF_USERNAME/Agentic-Reasoning-Data final_dataset/github_data.jsonl data/github_data.jsonl --repo-type dataset
+          # Only upload if the file actually has data in it (-s checks if file size > 0)
+          if [ -s final_dataset/github_data.jsonl ]; then
+            pip install huggingface_hub
+            huggingface-cli upload $HF_USERNAME/Agentic-Reasoning-Data final_dataset/github_data.jsonl data/github_data.jsonl --repo-type dataset
+            echo "Data successfully pushed to Hugging Face!"
+          else
+            echo "No data generated in this batch. Skipping Hugging Face upload to save bandwidth."
+          fi
