@@ -24,6 +24,12 @@ class AgenticState(TypedDict):
     problem_is_valid: bool       
     audit_feedback: str    
     
+    # --- NEW ENTERPRISE FIELDS FOR FORMAL LOGIC & ENTROPY ---
+    fundamental_laws: Optional[str]  
+    difficulty_tier: Optional[str]   
+    final_correct_code: Optional[str]
+    # --------------------------------------------------------
+    
     proposed_code: Optional[str] 
     red_team_critique: Optional[str] 
     execution_success: bool          

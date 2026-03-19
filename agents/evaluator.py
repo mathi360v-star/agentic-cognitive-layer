@@ -60,9 +60,27 @@ async def evaluate_code(state: AgenticState) -> AgenticState:
         reasoning = parsed_data.get("final_verdict_reasoning", "Unknown.")
         
         state["execution_success"] = success
+        
+        # ------------------------------------------------------------------
+        # CRITICAL UPGRADE: The Success Block with Entropy Logic
+        # ------------------------------------------------------------------
         if success:
             print("[+] SUCCESS! The Supreme Judge ruled the solution FLAWLESS.")
             state["traceback"] = None
+            
+            # THE ENTROPY CALCULATOR
+            iters = state.get("iteration_count", 1)
+            if iters == 1:
+                difficulty = "Tier 1 (Foundational/Easy)"
+            elif iters == 2 or iters == 3:
+                difficulty = "Tier 2 (Applied/Moderate)"
+            else:
+                difficulty = "Tier 3 (Edge-Case/Hard - High Entropy)"
+                
+            # Safely inject the new data directly into the LangGraph state
+            state["final_correct_code"] = state.get("proposed_code", "")
+            state["difficulty_tier"] = difficulty
+            
         else:
             print(f"[-] FAILURE! Jury Verdict: {reasoning}")
             state["traceback"] = f"Red Team: {critique}\nVerdict: {reasoning}"
@@ -72,4 +90,5 @@ async def evaluate_code(state: AgenticState) -> AgenticState:
         state["execution_success"] = False
         state["traceback"] = f"System Error during Jury AI evaluation: {e}"
 
+    # Return the fully intact state dictionary back to LangGraph
     return state

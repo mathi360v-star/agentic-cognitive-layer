@@ -9,6 +9,8 @@ from schemas.models import AgenticState
 # Import your agents
 from agents.professor import generate_curriculum
 from agents.verifier import audit_problem
+# ---> NEW: Import the Physicist
+from agents.physicist import node_physicist 
 from agents.scientist import propose_solution
 from agents.evaluator import evaluate_code
 from agents.analyst import analyze_failure
@@ -33,7 +35,8 @@ def load_curriculum():
     return MASTER_CURRICULUM
 
 def check_verification_status(state: AgenticState):
-    if state.get("problem_is_valid"): return "Scientist"
+    # ---> CRITICAL FIX: Route to Physicist instead of Scientist upon approval
+    if state.get("problem_is_valid"): return "Physicist"
     return "Professor" 
 
 def check_execution_status(state: AgenticState):
@@ -49,10 +52,13 @@ def check_execution_status(state: AgenticState):
 
 def harvest_training_data(state: AgenticState):
     if state.get("iteration_count", 0) > 1 and state.get("execution_success"):
+        # ---> CRITICAL FIX: Ensure the new fields are actually saved to the file
         trace = {
             "problem": state.get("problem_statement"),
             "domain": state.get("domain", "Engineering"),
             "language": state.get("target_language", "python"),
+            "fundamental_laws": state.get("fundamental_laws", ""), # NEW
+            "difficulty_tier": state.get("difficulty_tier", ""),   # NEW
             "rca_history": state.get("rca_history", []),
             "final_correct_code": state.get("proposed_code")
         }
@@ -64,13 +70,25 @@ def build_agentic_graph():
     workflow = StateGraph(AgenticState)
     workflow.add_node("Professor", generate_curriculum)
     workflow.add_node("Verifier", audit_problem)
+    # ---> NEW: Add the Physicist Node to the Graph
+    workflow.add_node("Physicist", node_physicist) 
     workflow.add_node("Scientist", propose_solution)
     workflow.add_node("Evaluator", evaluate_code)
     workflow.add_node("Analyst", analyze_failure)
 
     workflow.set_entry_point("Professor")
     workflow.add_edge("Professor", "Verifier")
-    workflow.add_conditional_edges("Verifier", check_verification_status, {"Scientist": "Scientist", "Professor": "Professor"})
+    
+    # ---> NEW: Conditional router now points to Physicist
+    workflow.add_conditional_edges(
+        "Verifier", 
+        check_verification_status, 
+        {"Physicist": "Physicist", "Professor": "Professor"}
+    )
+    
+    # ---> NEW: The Physicist extracts the laws, then hands off to the Scientist
+    workflow.add_edge("Physicist", "Scientist")
+    
     workflow.add_edge("Scientist", "Evaluator")
     workflow.add_conditional_edges("Evaluator", check_execution_status, {"success_end": END, "max_retries_end": END, "analyze_failure": "Analyst"})
     workflow.add_edge("Analyst", "Scientist")
