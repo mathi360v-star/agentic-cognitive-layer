@@ -1,6 +1,6 @@
 name: GH Swarm (Chunks 0-2)
 on:
-  workflow_dispatch: # MANUAL TRIGGER ONLY: Cron schedule removed for QA testing
+  workflow_dispatch: # MANUAL TRIGGER ONLY for your QA phase
 
 jobs:
   generate_and_stream:
@@ -23,7 +23,6 @@ jobs:
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
           GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
           COHERE_API_KEYS: ${{ secrets.COHERE_API_KEYS }}
-          CEREBRAS_API_KEYS: ${{ secrets.CEREBRAS_API_KEYS }}
           SAMBANOVA_API_KEYS: ${{ secrets.SAMBANOVA_API_KEYS }}
           MISTRAL_API_KEYS: ${{ secrets.MISTRAL_API_KEYS }}
         run: |
@@ -36,18 +35,18 @@ jobs:
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
-          # GATE 2: Count the exact number of verified JSON lines
-          VALID_LINES=$(wc -l < dataset/clean_training_data.jsonl 2>/dev/null || echo 0)
+          # FIX: Check for the SFT data stream produced by the new sanitizer
+          VALID_LINES=$(wc -l < dataset/clean_sft_data.jsonl 2>/dev/null || echo 0)
           
-          echo "[SYSTEM] Detected $VALID_LINES verified traces ready for upload."
+          echo "[SYSTEM] Detected $VALID_LINES verified SFT traces ready for upload."
 
           if [ "$VALID_LINES" -gt 0 ]; then
             echo "[*] Connecting to Hugging Face..."
             sleep $((RANDOM % 5 + 1))
             
-            # The Enterprise Fix: We simply call the dedicated Python script
+            # This calls the script we updated to push BOTH SFT and DPO files
             python utils/upload_to_hf.py
             
           else
-            echo "[-] Zero verified traces detected. Vault locked. Skipping upload to prevent data corruption."
+            echo "[-] Zero verified traces detected. Vault locked to prevent corruption."
           fi

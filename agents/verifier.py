@@ -1,62 +1,76 @@
 import json
 import re
-import ast
 from langchain_core.messages import SystemMessage, HumanMessage
 from schemas.models import AgenticState
-from utils.llm_router import safe_async_invoke
+from utils.llm_router import heavy_async_invoke 
 
-async def audit_problem(state: AgenticState) -> AgenticState:
-    print("\n--- [Layer 1.5] The Verifier is auditing the problem ---")
+async def node_verifier(state: AgenticState) -> AgenticState:
+    print(f"\n--- [Layer 1.5] The Verifier is auditing the {state.get('domain', 'STEM')} problem ---")
     
-    if not state.get("problem_statement") or len(state.get("problem_statement")) < 20:
-        print("[-] Verifier REJECTED: Professor provided an empty or invalid problem.")
-        state["problem_is_valid"] = False
-        state["audit_feedback"] = "Problem statement is empty or too short."
-        return state
+    problem = state.get("problem_statement", "").strip()
+    domain = state.get("domain", "General Engineering")
+    
+    if not problem or len(problem) < 30:
+        print("[-] Verifier REJECTED: Problem statement too short.")
+        return {"problem_is_valid": False, "audit_feedback": "Empty problem."}
 
     try:
-        system_prompt = """
-        Role: Elite Scientific Peer Reviewer. 
-        Audit the problem for physical reality and logical correctness.
-        Output ONLY valid JSON. Zero conversational text.
+        # THE UNIVERSAL STEM CONSTITUTION
+        system_prompt = f"""
+        Role: Principal STEM Auditor & Formal Logic Verifier.
+        Expertise: {domain}
         
-        {
+        Task: Perform an Epistemic Audit. You must catch "AI Hallucinations" before they enter the dataset.
+        
+        AUDIT CRITERIA:
+        1. DIMENSIONAL/LOGICAL REALITY: In Math/Physics, are the units consistent? In Code, is the logic physically possible?
+        2. CONSTRAINTS: Are the constraints (e.g., O(n) time, 8-byte alignment) mutually exclusive? 
+        3. SOLVABILITY: Can a 70B model solve this in 5 steps? If it requires a supercomputer, ABORT.
+        
+        OUTPUT FORMAT (Strict JSON Only):
+        {{
             "is_valid": true,
             "flaw_reasoning": "Valid"
-        }
+        }}
         """
 
-        human_prompt = f"Language: {state.get('target_language')}\nProblem: {state.get('problem_statement')}\nTests: {state.get('hidden_unit_tests')}"
+        human_prompt = f"Problem: {problem}\nLanguage/Context: {state.get('target_language')}"
 
-        messages = [
+        # HEAVY LANE: This requires Llama 3.3 70B or Gemini 2.0 level intelligence
+        raw_response = await heavy_async_invoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=human_prompt)
-        ]
+        ], temperature=0.0)
 
-        # Network Call
-        raw_response = await safe_async_invoke(messages, temperature=0.0)
-
-        # Parsing
-        match = re.search(r'\{[\s\S]*\}', raw_response)
-        if not match: raise ValueError("No JSON object found.")
+        # ENTERPRISE JSON CLEANING: Bypasses markdown and escape char errors
+        # Removes ```json ... ``` blocks if present
+        clean_json = re.sub(r'```json\s*|\s*```', '', raw_response).strip()
+        # Find the first { and last }
+        start_idx = clean_json.find('{')
+        end_idx = clean_json.rfind('}')
+        
+        if start_idx == -1 or end_idx == -1:
+            raise ValueError("No JSON structure found in response.")
             
-        clean_text = match.group(0)
-        try:
-            parsed_data = json.loads(clean_text)
-        except json.JSONDecodeError:
-            parsed_data = ast.literal_eval(clean_text)
+        final_json = clean_json[start_idx:end_idx+1]
+        parsed_data = json.loads(final_json)
         
-        state["problem_is_valid"] = parsed_data.get("is_valid", False)
-        state["audit_feedback"] = parsed_data.get("flaw_reasoning", "Unknown error.")
+        is_valid = parsed_data.get("is_valid", False)
+        feedback = parsed_data.get("flaw_reasoning", "Unknown logical error.")
         
-        if state["problem_is_valid"]:
-            print("[+] Verifier APPROVED the problem.")
+        if is_valid:
+            print(f"[+] Verifier APPROVED {domain} problem.")
         else:
-            print(f"[-] Verifier REJECTED. Reason: {state['audit_feedback']}")
+            print(f"[-] Verifier REJECTED. Reason: {feedback}")
+            
+        return {
+            "problem_is_valid": is_valid,
+            "audit_feedback": feedback
+        }
             
     except Exception as e:
-        print(f"[!] Verifier Agent Failure: {e}. Defaulting to rejection.")
-        state["problem_is_valid"] = False
-        state["audit_feedback"] = "System parsing or API error during verification."
-
-    return state
+        print(f"[!] Verifier Failure: {str(e)}. Defaulting to rejection to save API credits.")
+        return {
+            "problem_is_valid": False,
+            "audit_feedback": f"System Parsing Error: {str(e)}"
+        }

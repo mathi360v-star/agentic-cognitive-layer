@@ -2,82 +2,87 @@ import json
 import re
 import os
 
-def clean_code_block(code: str) -> str:
-    if not code: return ""
-    code = re.sub(r"^```[a-zA-Z]*\n", "", code, flags=re.MULTILINE)
-    code = re.sub(r"^```\n?", "", code, flags=re.MULTILINE)
-    return code.strip()
+def clean_solution_block(solution: str, target_language: str) -> str:
+    if not solution: return ""
+    # Preserve LaTeX for Math/Physics
+    if target_language == "Agnostic/Math":
+        return solution.strip()
+    # Strip markdown for Code
+    solution = re.sub(r"^```[a-zA-Z]*\n", "", solution, flags=re.MULTILINE)
+    solution = re.sub(r"^```\n?", "", solution, flags=re.MULTILINE)
+    return solution.strip()
 
 def sanitize_dataset():
-    print("\n--- [GATE 1] Deep-Sanitization & Data Integrity Check ---")
+    print("\n--- [GATE 1] Dual-Stream SFT & DPO Extraction ---")
     
     os.makedirs("dataset", exist_ok=True)
     RAW_DATA_PATH = "dataset/training_traces.jsonl"
-    CLEAN_DATA_PATH = "dataset/clean_training_data.jsonl"
-
+    SFT_OUT = "dataset/clean_sft_data.jsonl" # For Knowledge
+    DPO_OUT = "dataset/clean_dpo_data.jsonl" # For Reasoning
+    
     if not os.path.exists(RAW_DATA_PATH):
-        print("[-] No raw data found. Halting sanitizer.")
-        open(CLEAN_DATA_PATH, 'w').close() # Ensure an empty file exists so bash doesn't crash
+        print("[-] No raw data found. Halting.")
         return
 
-    valid_traces = 0
+    sft_count = 0
+    dpo_count = 0
 
     with open(RAW_DATA_PATH, 'r', encoding='utf-8') as infile, \
-         open(CLEAN_DATA_PATH, 'w', encoding='utf-8') as outfile:
+         open(SFT_OUT, 'w', encoding='utf-8') as sft_file, \
+         open(DPO_OUT, 'w', encoding='utf-8') as dpo_file:
         
         for line in infile:
-            if not line.strip(): continue # Skip blank lines
-            
             try:
                 trace = json.loads(line)
-                problem = trace.get("problem", "").strip()
+                
+                # Metadata Extraction
+                problem = trace.get("problem_statement", trace.get("problem", "")).strip()
                 final_code = trace.get("final_correct_code", "").strip()
+                laws = trace.get("fundamental_laws", "Standard STEM Principles").strip()
+                tier = trace.get("difficulty_tier", "Tier 1 (Foundational)").strip()
                 rca_history = trace.get("rca_history", [])
-                
-                # ---------------------------------------------------------
-                # STRICT INTEGRITY CHECKS (Drops corrupted/null data)
-                # ---------------------------------------------------------
-                # 1. Reject if problem statement is missing or too short
-                if not problem or len(problem) < 30:
-                    print("[-] Dropping trace: Problem statement missing or too short.")
+                target_lang = trace.get("target_language", "C/Python")
+                domain = trace.get("domain", "Engineering")
+
+                # Basic Integrity Check
+                if not problem or not final_code or len(final_code) < 30:
                     continue
-                    
-                # 2. Reject if code is missing or impossibly short
-                if not final_code or len(final_code) < 30:
-                    print("[-] Dropping trace: Code missing or too short.")
-                    continue
-                
-                clean_code = clean_code_block(final_code)
-                if not clean_code: 
-                    continue # Reject if markdown stripping leaves nothing
-                
-                # Construct DeepSeek-style thought process
-                thought_process = "Analyzing constraints to prevent edge case failure.\n"
+
+                clean_final = clean_solution_block(final_code, target_lang)
+
+                # --- STREAM 1: THE SFT DATA (The "Gold" Answer) ---
+                # We save EVERY success here.
+                sft_thought = f"Difficulty: {tier}\nLaws Applied: {laws}\n"
                 if rca_history:
-                    thought_process += "Internal debugging history:\n"
-                    for rca in rca_history:
-                        flaw = rca.get('mechanical_failure', '').strip()
-                        rule = rca.get('generalized_rule', '').strip()
-                        # Only append if the AI actually provided text, not nulls
-                        if flaw and rule:
-                            thought_process += f"- Flaw: {flaw}\n- Correction: {rule}\n"
+                    sft_thought += f"Self-Correction: {rca_history[-1].get('generalized_rule', 'Refined logic')}"
                 
-                formatted_trace = {
-                    "instruction": f"Domain: Engineering\nProblem:\n{problem}",
-                    "output": f"<think>\n{thought_process}\n</think>\n\n{clean_code}"
+                sft_json = {
+                    "instruction": f"Domain: {domain}\nProblem: {problem}",
+                    "output": f"<think>\n{sft_thought}\n</think>\n\n{clean_final}"
                 }
+                sft_file.write(json.dumps(sft_json) + "\n")
+                sft_count += 1
+
+                # --- STREAM 2: THE DPO DATA (The "Preference" Pair) ---
+                # We only save if there was a struggle (RCA history exists)
+                if rca_history:
+                    raw_fail = rca_history[0].get("failed_code_snapshot", "")
+                    clean_fail = clean_solution_block(raw_fail, target_lang)
+                    
+                    if clean_fail and len(clean_fail) > 10:
+                        dpo_json = {
+                            "prompt": f"Domain: {domain}\nDifficulty: {tier}\nProblem:\n{problem}",
+                            "chosen": f"<think>\nVerification against laws: {laws}\nCorrection: {rca_history[0].get('generalized_rule', '')}\n</think>\n\n{clean_final}",
+                            "rejected": f"<think>\nInitial approach assuming standard patterns...\n</think>\n\n{clean_fail}"
+                        }
+                        dpo_file.write(json.dumps(dpo_json) + "\n")
+                        dpo_count += 1
                 
-                outfile.write(json.dumps(formatted_trace) + "\n")
-                valid_traces += 1
-                
-            except json.JSONDecodeError:
-                print("[!] Dropping trace: Critical JSON corruption detected.")
-                continue
-            except Exception as e:
-                print(f"[!] Dropping trace: Unknown error -> {e}")
+            except Exception:
                 continue
 
-    print(f"[+] Integrity Check Passed. {valid_traces} Flawless Traces securely extracted to {CLEAN_DATA_PATH}.")
+    print(f"[+] SFT Extracted: {sft_count} samples.")
+    print(f"[+] DPO Extracted: {dpo_count} preference pairs.")
 
 if __name__ == "__main__":
     sanitize_dataset()

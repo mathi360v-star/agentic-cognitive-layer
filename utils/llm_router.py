@@ -62,6 +62,9 @@ def build_llm_pool() -> list:
 
 GLOBAL_LLM_POOL = build_llm_pool()
 
+# =====================================================================
+# LANE 1: THE FAST LANE (Uses all 30 keys for general tasks)
+# =====================================================================
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=16))
 async def safe_async_invoke(messages: list, temperature: float = 0.2) -> str:
     if not GLOBAL_LLM_POOL:
@@ -73,7 +76,6 @@ async def safe_async_invoke(messages: list, temperature: float = 0.2) -> str:
     last_exception = None
 
     for item in current_cascade:
-        # THE FIX: Safely unpack the dictionary
         llm = item["llm"]
         provider = item["provider"]
         
@@ -107,4 +109,60 @@ async def safe_async_invoke(messages: list, temperature: float = 0.2) -> str:
             continue 
 
     print("[-] Swarm overload. Triggering exponential backoff sleep...")
+    raise last_exception
+
+# =====================================================================
+# LANE 2: THE HEAVY LANE (Uses only Frontier Models for Strict Judging)
+# =====================================================================
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=16))
+async def heavy_async_invoke(messages: list, temperature: float = 0.0) -> str:
+    """ONLY routes to 70B+ or frontier models for complex mathematical judging."""
+    if not GLOBAL_LLM_POOL:
+        raise ValueError("System Error: No LLMs initialized.")
+
+    # Filter the pool to ONLY include the high-IQ heavyweights
+    heavy_pool = [item for item in GLOBAL_LLM_POOL if item["provider"] in ["groq", "google", "cohere", "cerebras"]]
+    
+    if not heavy_pool:
+        raise ValueError("System Error: No heavy LLMs available in the pool.")
+
+    current_cascade = list(heavy_pool)
+    random.shuffle(current_cascade)
+
+    last_exception = None
+
+    for item in current_cascade:
+        llm = item["llm"]
+        provider = item["provider"]
+        
+        # --- THE DRIP SYSTEM (Token Bucket Algorithm) ---
+        async with LOCK:
+            now = time.time()
+            time_since_last_call = now - LAST_CALL_TIME[provider]
+            required_cooldown = RATE_LIMITS[provider]
+            
+            if time_since_last_call < required_cooldown:
+                sleep_time = required_cooldown - time_since_last_call
+                await asyncio.sleep(sleep_time)
+            
+            LAST_CALL_TIME[provider] = time.time()
+        # ------------------------------------------------
+
+        try:
+            model_name = getattr(llm, 'model_name', getattr(llm, 'model', 'Unknown Model'))
+            bound_llm = llm.bind(temperature=temperature)
+            response = await bound_llm.ainvoke(messages)
+            
+            if not response.content or len(response.content) < 5:
+                raise ValueError("LLM returned an empty string.")
+                
+            return response.content
+            
+        except Exception as e:
+            error_msg = str(e).replace('\n', ' ')[:150] 
+            print(f"[!] HEAVY ROUTER: {model_name} failed. EXACT ERROR: {error_msg}...")
+            last_exception = e
+            continue 
+
+    print("[-] Heavy Swarm overload. Triggering exponential backoff sleep...")
     raise last_exception
