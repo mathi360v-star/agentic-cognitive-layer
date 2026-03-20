@@ -10,7 +10,7 @@ from schemas.models import AgenticState
 # Import your agents
 from agents.professor import generate_curriculum
 from agents.epistemic_eval import node_epistemic_evaluator # NEW
-from agents.verifier import audit_problem
+from agents.verifier import node_verifier
 from agents.physicist import node_physicist 
 from agents.scientist import propose_solution
 from agents.evaluator import evaluate_code
@@ -89,7 +89,7 @@ def build_agentic_graph():
     # 1. Add All Nodes
     workflow.add_node("Professor", generate_curriculum)
     workflow.add_node("Epistemic", node_epistemic_evaluator) # NEW
-    workflow.add_node("Verifier", audit_problem)
+    workflow.add_node("verifier", node_verifier)
     workflow.add_node("Physicist", node_physicist) 
     workflow.add_node("Scientist", propose_solution)
     workflow.add_node("Evaluator", evaluate_code)
