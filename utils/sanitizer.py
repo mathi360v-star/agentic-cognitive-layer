@@ -15,17 +15,15 @@ def clean_solution_block(solution: str, target_language: str) -> str:
 def sanitize_dataset():
     print("\n--- [GATE 1] Dual-Stream SFT & DPO Extraction ---")
     
-    # --- NEW: Path Safety & Race Condition Logic ---
-    os.makedirs("dataset", exist_ok=True)
-    # Using absolute paths ensures the script finds the file regardless of where it's called
-    RAW_DATA_PATH = os.path.abspath("dataset/training_traces.jsonl")
-    SFT_OUT = os.path.abspath("dataset/clean_sft_data.jsonl")
-    DPO_OUT = os.path.abspath("dataset/clean_dpo_data.jsonl")
+    # Use Absolute Paths to prevent 'File Not Found' errors in CI/CD
+    base_dir = os.getcwd()
+    RAW_DATA_PATH = os.path.join(base_dir, "dataset/training_traces.jsonl")
+    SFT_OUT = os.path.join(base_dir, "dataset/clean_sft_data.jsonl")
+    DPO_OUT = os.path.join(base_dir, "dataset/clean_dpo_data.jsonl")
     
-    # Check if file exists AND has content (size > 0)
     if not os.path.exists(RAW_DATA_PATH) or os.path.getsize(RAW_DATA_PATH) == 0:
-        print(f"[-] No raw data found at {RAW_DATA_PATH}. Halting.")
-        # Create empty files so the YAML pipeline doesn't crash on 'ls'
+        print(f"[-] No raw data found at {RAW_DATA_PATH}. Skipping.")
+        # Ensure the output files exist even if empty to prevent YAML crashes
         open(SFT_OUT, 'w').close()
         open(DPO_OUT, 'w').close()
         return
