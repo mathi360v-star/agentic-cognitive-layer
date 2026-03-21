@@ -1,6 +1,6 @@
 name: GH Swarm (Chunks 0-2)
 on:
-  workflow_dispatch: # MANUAL TRIGGER ONLY for your QA phase
+  workflow_dispatch: # MANUAL TRIGGER ONLY for QA testing phase
 
 jobs:
   generate_and_stream:
@@ -26,6 +26,8 @@ jobs:
           SAMBANOVA_API_KEYS: ${{ secrets.SAMBANOVA_API_KEYS }}
           MISTRAL_API_KEYS: ${{ secrets.MISTRAL_API_KEYS }}
         run: |
+          # Create dataset folder to ensure path exists
+          mkdir -p dataset
           python main.py --chunk ${{ matrix.chunk }} --total-chunks 9
           python utils/sanitizer.py
 
@@ -35,18 +37,20 @@ jobs:
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
-          # FIX: Check for the SFT data stream produced by the new sanitizer
-          VALID_LINES=$(wc -l < dataset/clean_sft_data.jsonl 2>/dev/null || echo 0)
+          # Wait for OS to sync file buffers to disk
+          sleep 5 
           
-          echo "[SYSTEM] Detected $VALID_LINES verified SFT traces ready for upload."
-
-          if [ "$VALID_LINES" -gt 0 ]; then
-            echo "[*] Connecting to Hugging Face..."
-            sleep $((RANDOM % 5 + 1))
+          # FIX: Robustly check for the SFT data stream produced by the new sanitizer
+          if [ -f "dataset/clean_sft_data.jsonl" ]; then
+            VALID_LINES=$(wc -l < dataset/clean_sft_data.jsonl)
             
-            # This calls the script we updated to push BOTH SFT and DPO files
-            python utils/upload_to_hf.py
-            
+            if [ "$VALID_LINES" -gt 0 ]; then
+              echo "[SYSTEM] Detected $VALID_LINES verified SFT traces. Initializing upload..."
+              # Calls Python uploader which handles BOTH SFT and DPO files
+              python utils/upload_to_hf.py
+            else
+              echo "[-] SFT file exists but is empty. Skipping upload."
+            fi
           else
-            echo "[-] Zero verified traces detected. Vault locked to prevent corruption."
+            echo "[-] No SFT data file found at dataset/clean_sft_data.jsonl. Swarm likely failed."
           fi

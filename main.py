@@ -151,7 +151,7 @@ async def main(chunk_index: int, total_chunks: int):
     end_idx = start_idx + chunk_size if chunk_index < total_chunks - 1 else len(active_curriculum)
     assigned_topics = active_curriculum[start_idx:end_idx]
     
-    semaphore = asyncio.Semaphore(4)
+    semaphore = asyncio.Semaphore(2)
     
     tasks = [
         run_single_loop(app, start_idx + j, topic, semaphore) 
@@ -168,5 +168,14 @@ if __name__ == "__main__":
     parser.add_argument("--total-chunks", type=int, default=1)
     args = parser.parse_args()
     
+    # Ensure directory exists with absolute certainty before starting
     os.makedirs("dataset", exist_ok=True)
+    
+    # Run the swarm
     asyncio.run(main(args.chunk, args.total_chunks))
+    
+    # NEW: Small sleep to ensure file buffers are flushed to disk 
+    # This prevents the Sanitizer from missing the raw data.
+    import time
+    print("[*] Flushing buffers and cooling down...")
+    time.sleep(5)
