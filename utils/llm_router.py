@@ -112,11 +112,11 @@ async def safe_async_invoke(messages: list, temperature: float = 0.2) -> str:
     raise last_exception
 
 # =====================================================================
-# LANE 2: THE HEAVY LANE (Uses only Frontier Models for Strict Judging)
+# LANE 2: THE HEAVY LANE (Upgraded with 7-Attempt Persistence & Jitter)
 # =====================================================================
-@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=16))
+@retry(stop=stop_after_attempt(7), wait=wait_exponential(multiplier=2, min=4, max=20))
 async def heavy_async_invoke(messages: list, temperature: float = 0.0) -> str:
-    """ONLY routes to 70B+ or frontier models for complex mathematical judging."""
+    """ONLY routes to 70B+ or frontier models with high-persistence retries."""
     if not GLOBAL_LLM_POOL:
         raise ValueError("System Error: No LLMs initialized.")
 
@@ -125,6 +125,10 @@ async def heavy_async_invoke(messages: list, temperature: float = 0.0) -> str:
     
     if not heavy_pool:
         raise ValueError("System Error: No heavy LLMs available in the pool.")
+
+    # NEW STRATEGY: Mandatory Jitter before entering the loop. 
+    # This prevents 'bursting' and reduces 429 collisions.
+    await asyncio.sleep(random.uniform(2, 5))
 
     current_cascade = list(heavy_pool)
     random.shuffle(current_cascade)
@@ -164,5 +168,5 @@ async def heavy_async_invoke(messages: list, temperature: float = 0.0) -> str:
             last_exception = e
             continue 
 
-    print("[-] Heavy Swarm overload. Triggering exponential backoff sleep...")
+    print("[-] Heavy Swarm overload. Triggering deep exponential backoff...")
     raise last_exception

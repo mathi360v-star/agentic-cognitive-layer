@@ -155,7 +155,7 @@ async def main(chunk_index: int, total_chunks: int):
     end_idx = start_idx + chunk_size if chunk_index < total_chunks - 1 else len(active_curriculum)
     assigned_topics = active_curriculum[start_idx:end_idx]
     
-    semaphore = asyncio.Semaphore(2) # Safe concurrency for Gemini Free
+    semaphore = asyncio.Semaphore(1) # Safe concurrency for Gemini Free
     
     tasks = [
         run_single_loop(app, start_idx + j, topic, semaphore) 

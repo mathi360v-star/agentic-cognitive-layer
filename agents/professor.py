@@ -50,13 +50,10 @@ async def generate_curriculum(state: AgenticState) -> AgenticState:
         Role: Elite STEM Curriculum Architect.
         TARGET DOMAIN: {selected_domain}
         Assigned Topic: {state.get("current_topic", "General")}
-        {rejection_warning}
         
-        Task: Generate a complex reasoning problem. 
-        Select a random difficulty tier:
-        - 50% chance: Tier 1 (Foundational)
-        - 30% chance: Tier 2 (Applied)
-        - 20% chance: Tier 3 (Edge-Case)
+        TASK: Generate a complex reasoning problem SPECIFICALLY for: {assigned_tier}
+        
+        {rejection_warning}
 
         Constraints:
         - Output ONLY valid JSON. Zero conversational filler.
@@ -65,7 +62,7 @@ async def generate_curriculum(state: AgenticState) -> AgenticState:
             "domain": "{selected_domain}",
             "target_language": "{lang_hint}",
             "problem_statement": "Detailed problem text here.",
-            "difficulty_level": "Tier 1/2/3",
+            "difficulty_level": "{assigned_tier}",
             "hidden_unit_tests": "Logic assertions."
         }}
         """
