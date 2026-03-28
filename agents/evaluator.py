@@ -10,115 +10,91 @@ async def evaluate_code(state: AgenticState) -> AgenticState:
         problem = state.get("problem_statement", "")
         proposed_solution = state.get("proposed_code", "")
         current_domain = state.get("domain", "General Engineering")
+        laws = state.get("fundamental_laws", "Standard STEM Axioms")
         
         # ------------------------------------------------------------------
-        # PHASE 1: RED TEAM
+        # PHASE 1: PEDANTIC RED TEAM (Lane 1 - 8B/70B Mix)
         # ------------------------------------------------------------------
-        red_team_prompt = """
-        Role: Ruthless Security Auditor. Prove the solution is flawed.
-        Check edge cases, time complexity, and physical/math violations.
-        CRITICAL: Output STRICTLY 1 to 3 sentences maximum. Be concise.
+        red_team_prompt = f"""
+        Role: Pedantic STEM Auditor. Your goal is to find a logical, mathematical, or physical flaw.
+        DOMAIN: {current_domain}
+        GROUNDING LAWS: {laws}
+        
+        CRITICAL CHECKS:
+        1. Dimensional Analysis: Do the units match?
+        2. Boundary Conditions: Does it fail at 0, Infinity, or NULL?
+        3. Efficiency: Does it violate the required Big-O complexity?
+        
+        Output EXACTLY 2 sentences identifying the most likely flaw. If no flaw exists, invent a highly skeptical edge-case scenario.
         """
-        
-        rt_messages = [
-            SystemMessage(content=red_team_prompt),
-            HumanMessage(content=f"Problem: {problem}\nSolution:\n{proposed_solution}")
-        ]
         
         print("[*] Red Teamer is hunting for vulnerabilities...")
-        critique = await safe_async_invoke(rt_messages, temperature=0.7)
-        state["red_team_critique"] = critique
+        critique = await safe_async_invoke([
+            SystemMessage(content=red_team_prompt),
+            HumanMessage(content=f"Solution to Audit:\n{proposed_solution}")
+        ], temperature=0.7)
 
         # ------------------------------------------------------------------
-        # PHASE 2: SUPREME JUDGE (Universal Constitution)
+        # PHASE 2: SUPREME JUDGE (Lane 2 - Frontier Models Only)
         # ------------------------------------------------------------------
         judge_prompt = f"""
-        Act as a Universal Constitutional AI Verifier. You are evaluating a proposed solution in the domain of: {current_domain}.
+        Act as a Universal Constitutional AI Verifier. 
+        Evaluate this solution for {current_domain}. 
         
         THE CONSTITUTION:
-        Rule 1 (Logical Consistency): The solution must be internally consistent. Math must compute perfectly; code must compile mentally.
-        Rule 2 (Constraint Satisfaction): The solution must strictly adhere to EVERY constraint requested in the prompt.
-        Rule 3 (Physical/Mathematical Reality): The solution must not violate fundamental laws of physics, formal mathematics, or computer science theories.
-        Rule 4 (Boundary Immunity): The solution must explicitly account for edge cases (e.g., zero-division, NULL pointers).
+        Rule 1 (Logical Consistency): Internal math/logic must be perfect. No contradictions.
+        Rule 2 (Constraint Adherence): Must meet every requirement in the prompt.
+        Rule 3 (Dimensional & Physical Integrity): Units must be consistent. Physical laws ({laws}) must be obeyed.
+        Rule 4 (Edge-Case Immunity): Must handle NULL, zero, empty sets, or overflow.
+        Rule 5 (Adversarial Neutrality): Evaluate the Red Team Critique. If the Red Team is WRONG or being over-skeptical, you MUST REJECT their critique and favor the solution.
 
-        THE PROBLEM: 
-        {problem}
-        
-        THE PROPOSED SOLUTION: 
-        {proposed_solution}
-        
-        RED TEAM CRITIQUE TO CONSIDER:
-        {critique}
+        PROBLEM: {problem}
+        PROPOSED SOLUTION: {proposed_solution}
+        RED TEAM CRITIQUE: {critique}
 
-        EVALUATION PROTOCOL:
-        1. Evaluate Rule 1.
-        2. Evaluate Rule 2.
-        3. Evaluate Rule 3.
-        4. Evaluate Rule 4.
-
-        FINAL VERDICT:
-        You MUST conclude your response with a strict XML tag containing your final decision.
-        If ALL rules are satisfied and the Red Team critique is mitigated, output: <VERDICT>FLAWLESS</VERDICT>
-        If ANY rule is violated, output: <VERDICT>REJECTED</VERDICT>
+        FINAL VERDICT PROTOCOL:
+        1. Analyze the solution against Rule 1-4.
+        2. Specifically debunk or confirm the Red Team Critique.
+        3. Output your final decision inside <VERDICT>FLAWLESS</VERDICT> or <VERDICT>REJECTED</VERDICT> tags.
         """
         
-        judge_messages = [
-            HumanMessage(content=judge_prompt)
-        ]
-        
-        print(f"[*] Supreme Judge is weighing the evidence against the {current_domain} Constitution...")
-        
-        # THE ENTERPRISE FIX: We force the Judge to use the Heavy Lane (70B+ models) 
-        # to guarantee high-IQ verification of complex math and physics.
-        raw_verdict = await heavy_async_invoke(judge_messages, temperature=0.1)
+        print(f"[*] Supreme Judge is weighing evidence against the {current_domain} Constitution...")
+        # Lane 2: 70B+ logic lane
+        raw_verdict = await heavy_async_invoke([HumanMessage(content=judge_prompt)], temperature=0.0)
 
         # ------------------------------------------------------------------
-        # PHASE 3: STRICT XML PARSER & ENTROPY ROUTER
+        # PHASE 3: PARSING & ENTROPY LOGIC
         # ------------------------------------------------------------------
-        # Use Regex to hunt specifically for the XML tags to prevent false positives/negatives
         verdict_match = re.search(r"<VERDICT>(.*?)</VERDICT>", raw_verdict, re.IGNORECASE)
-        
-        # Default to False if the LLM hallucinated the tags entirely
-        success = False 
-        if verdict_match:
-            extracted_verdict = verdict_match.group(1).strip().upper()
-            if extracted_verdict == "FLAWLESS":
-                success = True
+        success = (verdict_match.group(1).strip().upper() == "FLAWLESS") if verdict_match else False
 
         state["execution_success"] = success
         
         if success:
             print("[+] SUCCESS! The Supreme Judge ruled the solution FLAWLESS.")
-            state["traceback"] = None
             
-            # THE ENTROPY CALCULATOR
-            iters = state.get("iteration_count", 1)
+            # DYNAMIC DIFFICULTY (Entropy Proxy)
+            iters = state.get("iteration_count", 0) + 1
             if iters == 1:
                 difficulty = "Tier 1 (Foundational/Easy)"
-            elif iters == 2 or iters == 3:
+            elif 2 <= iters <= 3:
                 difficulty = "Tier 2 (Applied/Moderate)"
             else:
                 difficulty = "Tier 3 (Edge-Case/Hard - High Entropy)"
                 
-            state["final_correct_code"] = proposed_solution
-            state["difficulty_tier"] = difficulty
-            
+            state.update({
+                "final_correct_code": proposed_solution,
+                "difficulty_tier": difficulty,
+                "traceback": None
+            })
         else:
-            print(f"[-] FAILURE! Constitutional Violation Detected.")
-            
-            # Clean up the output to save cleanly into our RCA trace
-            reasoning = raw_verdict.replace("\n", " ").strip()
-            # Remove the XML tag from the traceback so the Analyst doesn't get confused
-            reasoning = re.sub(r"<VERDICT>.*?</VERDICT>", "", reasoning, flags=re.IGNORECASE).strip()
-            
-            if len(reasoning) > 300:
-                reasoning = reasoning[:297] + "..."
-                
-            state["traceback"] = f"Red Team Critique: {critique}\nJudge Evaluation: {reasoning}"
+            print(f"[-] FAILURE! Constitutional Violation detected by Judge.")
+            # We strip the Verdict tag to keep the RCA clean for the Analyst
+            clean_reasoning = re.sub(r"<VERDICT>.*?</VERDICT>", "", raw_verdict, flags=re.IGNORECASE).strip()
+            state["traceback"] = f"RED TEAM: {critique}\nJUDGE ANALYSIS: {clean_reasoning[:1000]}"
             
     except Exception as e:
-        print(f"[!] Evaluator Agent Failure: {e}. Defaulting to rejection.")
-        state["execution_success"] = False
-        state["traceback"] = f"System Error during Jury AI evaluation: {e}"
+        print(f"[!] Evaluator Agent Failure: {e}")
+        state.update({"execution_success": False, "traceback": f"System Crash in Jury: {e}"})
 
     return state

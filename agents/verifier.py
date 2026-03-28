@@ -1,76 +1,84 @@
 import json
 import re
+import asyncio
 from langchain_core.messages import SystemMessage, HumanMessage
 from schemas.models import AgenticState
 from utils.llm_router import heavy_async_invoke 
 
 async def node_verifier(state: AgenticState) -> AgenticState:
-    print(f"\n--- [Layer 1.5] The Verifier is auditing the {state.get('domain', 'STEM')} problem ---")
+    """The Gatekeeper. Ensures STEM problems are logically sound and properly tiered."""
+    print(f"\n--- [Layer 1.5] The Verifier is performing a High-IQ Audit on {state.get('domain', 'STEM')} ---")
     
     problem = state.get("problem_statement", "").strip()
     domain = state.get("domain", "General Engineering")
+    tier = state.get("difficulty_tier", "Unknown")
     
-    if not problem or len(problem) < 30:
-        print("[-] Verifier REJECTED: Problem statement too short.")
-        return {"problem_is_valid": False, "audit_feedback": "Empty problem."}
+    if not problem or len(problem) < 50:
+        print("[-] Verifier REJECTED: Problem statement is too shallow for reasoning.")
+        return {"problem_is_valid": False, "audit_feedback": "Problem statement too brief."}
 
     try:
-        # THE UNIVERSAL STEM CONSTITUTION
+        # THE V3 STEM CONSTITUTION (AUDIT VERSION)
         system_prompt = f"""
-        Role: Principal STEM Auditor & Formal Logic Verifier.
+        Role: Principal STEM Auditor for Frontier AI Training.
         Expertise: {domain}
         
-        Task: Perform an Epistemic Audit. You must catch "AI Hallucinations" before they enter the dataset.
+        Task: Perform an Epistemic Audit on the proposed {tier} problem.
         
-        AUDIT CRITERIA:
-        1. DIMENSIONAL/LOGICAL REALITY: In Math/Physics, are the units consistent? In Code, is the logic physically possible?
-        2. CONSTRAINTS: Are the constraints (e.g., O(n) time, 8-byte alignment) mutually exclusive? 
-        3. SOLVABILITY: Can a 70B model solve this in 5 steps? If it requires a supercomputer, ABORT.
+        STRICT AUDIT RULES:
+        1. NO PARADOXES: The problem must not contain contradictory constraints (e.g., "Sort in O(1) time").
+        2. TIER ACCURACY: A {tier} problem must match that difficulty. If it's too easy, flag it.
+        3. GROUNDING: The problem must be solvable using fundamental laws of {domain}.
+        4. NO VAGUENESS: Variables and expected outputs must be explicitly defined.
         
-        OUTPUT FORMAT (Strict JSON Only):
+        OUTPUT FORMAT (STRICT JSON ONLY):
         {{
-            "is_valid": true,
-            "flaw_reasoning": "Valid"
+            "is_valid": true/false,
+            "flaw_reasoning": "Detailed explanation if false, 'Valid' if true",
+            "suggested_tier": "Tier 1/2/3"
         }}
         """
 
-        human_prompt = f"Problem: {problem}\nLanguage/Context: {state.get('target_language')}"
+        human_prompt = f"Problem to Audit:\n{problem}\n\nTarget Domain: {domain}\nStated Tier: {tier}"
 
-        # HEAVY LANE: This requires Llama 3.3 70B or Gemini 2.0 level intelligence
+        # LANE 2: We use the Heavy Router for guaranteed reasoning quality
         raw_response = await heavy_async_invoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=human_prompt)
         ], temperature=0.0)
 
-        # ENTERPRISE JSON CLEANING: Bypasses markdown and escape char errors
-        # Removes ```json ... ``` blocks if present
+        # --- ENTERPRISE RECOVERY LOGIC ---
+        # 1. Strip markdown
         clean_json = re.sub(r'```json\s*|\s*```', '', raw_response).strip()
-        # Find the first { and last }
-        start_idx = clean_json.find('{')
-        end_idx = clean_json.rfind('}')
+        # 2. Extract only the outermost JSON object
+        match = re.search(r'(\{.*\})', clean_json, re.DOTALL)
+        if not match:
+            raise ValueError("No valid JSON structure identified.")
         
-        if start_idx == -1 or end_idx == -1:
-            raise ValueError("No JSON structure found in response.")
-            
-        final_json = clean_json[start_idx:end_idx+1]
-        parsed_data = json.loads(final_json)
+        parsed_data = json.loads(match.group(1))
         
         is_valid = parsed_data.get("is_valid", False)
-        feedback = parsed_data.get("flaw_reasoning", "Unknown logical error.")
-        
+        feedback = parsed_data.get("flaw_reasoning", "Unknown error.")
+        actual_tier = parsed_data.get("suggested_tier", tier)
+
         if is_valid:
-            print(f"[+] Verifier APPROVED {domain} problem.")
+            print(f"[+] Verifier APPROVED {domain} ({actual_tier})")
+            return {
+                "problem_is_valid": True,
+                "audit_feedback": "Valid",
+                "difficulty_tier": actual_tier # Sync the tier to the actual complexity
+            }
         else:
-            print(f"[-] Verifier REJECTED. Reason: {feedback}")
-            
-        return {
-            "problem_is_valid": is_valid,
-            "audit_feedback": feedback
-        }
+            print(f"[-] Verifier REJECTED: {feedback}")
+            return {
+                "problem_is_valid": False,
+                "audit_feedback": feedback
+            }
             
     except Exception as e:
-        print(f"[!] Verifier Failure: {str(e)}. Defaulting to rejection to save API credits.")
+        # If the 70B model fails to output JSON, we retry once with a simpler prompt or fail
+        print(f"[!] Verifier Logic Error: {str(e)}. Defaulting to rejection.")
         return {
             "problem_is_valid": False,
-            "audit_feedback": f"System Parsing Error: {str(e)}"
+            "audit_feedback": f"Verifier Syntax Error: {str(e)}"
         }
