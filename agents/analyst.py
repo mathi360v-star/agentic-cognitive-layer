@@ -1,86 +1,75 @@
 import json
 import re
-import ast
-from langchain_core.messages import SystemMessage, HumanMessage
 from schemas.models import AgenticState
-# We use safe_async_invoke for speed, but you could use heavy_async_invoke for complex math
 from utils.llm_router import safe_async_invoke 
+# Assuming you want to keep your RAG memory for Attempt 2
 from memory.vector_store import save_new_heuristic
 
-async def analyze_failure(state: AgenticState) -> AgenticState:
-    print("\n--- [Layer 4] The Analyst is performing Root Cause Analysis ---")
+async def analyze_failure(state: AgenticState) -> dict:
+    """Performs STEM Root Cause Analysis on logic, math, or physics failures."""
+    print("--- [Layer 4] The Analyst is performing STEM Root Cause Analysis ---")
     
+    # 1. Extraction from Universal Bus
+    problem = state.get("problem_statement", "")
+    failed_logic = state.get("proposed_code", "")
+    # Use audit_feedback or red_team_critique depending on which one was populated
+    judge_critique = state.get("audit_feedback", state.get("red_team_critique", "Logic error."))
+    laws = state.get("fundamental_laws", "Standard STEM Principles")
+    
+    # 2. The STEM Post-Mortem Prompt
+    prompt = f"""
+    You are a Formal Logic Analyst. A STEM solution has FAILED the Supreme Judge's audit.
+    
+    DOMAIN: {state.get('domain', 'Engineering')}
+    PROBLEM: {problem}
+    LAWS THAT MUST BE OBEYED: {laws}
+    
+    FAILED SOLUTION: 
+    {failed_logic}
+    
+    JUDGE'S CRITIQUE: 
+    {judge_critique}
+    
+    TASK:
+    Identify exactly why the logic failed. Was it a mathematical contradiction? A violation of a physical law? Or a code-level bug?
+    
+    Output your analysis in this format:
+    FAILURE: [Point of logical breakdown]
+    RULE: [Specific instruction to the Scientist for the next attempt]
+    """
+    
+    # Lane 1: Safe Router
+    rca_raw = await safe_async_invoke([{"role": "user", "content": prompt}])
+    
+    # 3. Clean and Extract the Heuristic
+    failure_desc = rca_raw.split("RULE:")[0].replace("FAILURE:", "").strip()
+    rule_desc = rca_raw.split("RULE:")[-1].strip() if "RULE:" in rca_raw else "Refine logic against laws."
+
+    # 4. Memory Injection (ChromaDB Vector Store)
     try:
-        # THE ENTERPRISE CONSTITUTIONAL PROMPT
-        system_prompt = """
-        Role: Principal AI Systems Forensic Engineer.
-        Goal: Conduct a post-mortem on a failed engineering solution.
-        
-        CRITICAL: You must identify which Fundamental Law or Rule was violated.
-        Output ONLY valid JSON. Keep descriptions dense and technical.
-        
-        {
-            "mechanical_failure": "The specific logical/syntax bug.",
-            "false_assumption": "Why the model thought this would work.",
-            "law_violation": "Which Fundamental Law/Axiom was ignored?",
-            "generalized_rule": "A high-level heuristic to prevent this forever."
-        }
-        """
-
-        # We feed the analyst the laws from the Physicist
-        laws = state.get("fundamental_laws", "Standard Engineering Principles")
-        failed_code = state.get("proposed_code", "")
-        
-        human_prompt = f"""
-        PROBLEM:
-        {state.get('problem_statement')}
-
-        FUNDAMENTAL LAWS TO OBEY:
-        {laws}
-
-        FAILED CODE SNAPSHOT:
-        {failed_code}
-
-        JURY VERDICT / ERROR:
-        {state.get('red_team_critique')}
-        """
-
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=human_prompt)
-        ]
-
-        # Use the standard router for speed
-        raw_response = await safe_async_invoke(messages, temperature=0.1)
-
-        # Robust JSON Parsing
-        match = re.search(r'\{[\s\S]*\}', raw_response)
-        if not match: raise ValueError("Analyst output was not JSON.")
-            
-        clean_text = match.group(0)
-        try:
-            parsed_data = json.loads(clean_text)
-        except json.JSONDecodeError:
-            parsed_data = ast.literal_eval(clean_text)
-        
-        # --- CRITICAL DPO UPGRADE: Capture the failed code for the Sanitizer ---
-        parsed_data["failed_code_snapshot"] = failed_code
-        
-        # Save to Vector Vault (ChromaDB) for RAG-based learning in Attempt 2
         save_new_heuristic(
-            problem_statement=state.get("problem_statement", ""),
-            flawed_assumption=parsed_data.get("false_assumption", "Unknown"),
-            generalized_rule=parsed_data.get("generalized_rule", "Verify constraints.")
+            problem_statement=problem,
+            flawed_assumption=failure_desc,
+            generalized_rule=rule_desc
         )
-        
-        # Append to the history bus
-        if "rca_history" not in state or state["rca_history"] is None:
-            state["rca_history"] = []
-            
-        state["rca_history"].append(parsed_data)
-        print(f"[*] RCA Complete. Violation: {parsed_data.get('law_violation', 'Logic')}. Trace saved to Vault.")
-        
     except Exception as e:
-        print(f"[!] Analyst Agent Failure: {e}. Skipping RCA memory update this round.")
-        
-    return state
+        print(f"[!] Vector Vault Sync Failed: {e}")
+
+    # 5. DPO Snapshot Construction
+    new_rca = {
+        "failed_code_snapshot": failed_logic,
+        "mechanical_failure": failure_desc,
+        "generalized_rule": rule_desc
+    }
+    
+    # Update history and state
+    history = state.get("rca_history", [])
+    if history is None: history = []
+    history.append(new_rca)
+    
+    # Return to Bus
+    return {
+        "rca_history": history, 
+        "iteration_count": state.get("iteration_count", 0) + 1,
+        "audit_feedback": f"FAILURE ANALYSIS: {failure_desc}\nREQUIRED FIX: {rule_desc}"
+    }

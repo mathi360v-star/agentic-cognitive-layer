@@ -4,10 +4,11 @@ import json
 import os
 import traceback
 import random 
+import time
 from langgraph.graph import StateGraph, END
 from schemas.models import AgenticState
 
-# Import your agents
+# --- 1. IMPORT SECTION ---
 from agents.professor import generate_curriculum
 from agents.epistemic_eval import node_epistemic_evaluator 
 from agents.verifier import node_verifier
@@ -15,10 +16,9 @@ from agents.physicist import node_physicist
 from agents.scientist import propose_solution
 from agents.evaluator import evaluate_code
 from agents.analyst import analyze_failure
+from agents.saboteur import node_saboteur # IMPORTED
 
-# --------------------------------------------------------------
-# THE MULTI-DOMAIN CURRICULUM
-# --------------------------------------------------------------
+# --- 2. THE MULTI-DOMAIN CURRICULUM ---
 MASTER_CURRICULUM = [
     "Advanced Embedded C & RTOS Memory Management",
     "Python AI & Reinforcement Learning Algorithms",
@@ -31,24 +31,28 @@ MASTER_CURRICULUM = [
 def load_curriculum():
     return MASTER_CURRICULUM
 
-# --------------------------------------------------------------
-# ROUTING LOGIC (The Brain)
-# --------------------------------------------------------------
+# --- 3. ROUTING LOGIC (The Brain) ---
 def check_epistemic_status(state: AgenticState):
-    """Shield Node: Prevents wasting credits on impossible problems."""
-    # FIX: Ensure return strings match EXACTLY with add_node keys below
     if state.get("problem_is_valid"): return "Verifier"
     return "Professor"
 
 def check_verification_status(state: AgenticState):
-    """Logic Node: Ensures the problem is syntactically sound."""
     if state.get("problem_is_valid"): return "Physicist"
     return "Professor" 
 
 def check_execution_status(state: AgenticState):
-    """Success Node: Determines if we should end, retry, or analyze failure."""
-    if state.get("execution_success"): return "success_end"
+    """
+    DPO STRATEGY: 
+    If successful on the first try, we FORCE it to the Saboteur.
+    This creates a 'Rejected' version of a perfect answer for DPO training.
+    """
+    if state.get("execution_success"):
+        # If it's the first success (iteration 0 or 1), get DPO data
+        if state.get("iteration_count", 0) <= 1:
+            return "Saboteur"
+        return "success_end"
     
+    # Handle Failures
     error_msg = str(state.get("traceback", ""))
     if "Mechanical Failure" in error_msg or "429" in error_msg:
         return "max_retries_end"
@@ -58,9 +62,7 @@ def check_execution_status(state: AgenticState):
         
     return "analyze_failure"
 
-# --------------------------------------------------------------
-# THE DUAL-STREAM HARVESTER
-# --------------------------------------------------------------
+# --- 4. THE DUAL-STREAM HARVESTER ---
 def harvest_training_data(state: AgenticState):
     if state.get("execution_success"):
         trace = {
@@ -77,34 +79,30 @@ def harvest_training_data(state: AgenticState):
             f.write(json.dumps(trace) + "\n")
         print(f"[$$$] {state.get('difficulty_tier')} trace harvested!")
 
-# --------------------------------------------------------------
-# THE V2 GRAPH CONSTRUCTION
-# --------------------------------------------------------------
+# --- 5. THE GRAPH CONSTRUCTION ---
 def build_agentic_graph():
     workflow = StateGraph(AgenticState)
     
-    # 1. Add All Nodes (FIXED: All keys are now CamelCase)
+    # Register Nodes
     workflow.add_node("Professor", generate_curriculum)
     workflow.add_node("Epistemic", node_epistemic_evaluator) 
-    workflow.add_node("Verifier", node_verifier) # Was 'verifier', now 'Verifier'
+    workflow.add_node("Verifier", node_verifier)
     workflow.add_node("Physicist", node_physicist) 
     workflow.add_node("Scientist", propose_solution)
     workflow.add_node("Evaluator", evaluate_code)
     workflow.add_node("Analyst", analyze_failure)
+    workflow.add_node("Saboteur", node_saboteur) # ADDED
 
-    # 2. Define the Flow
+    # Define the Flow
     workflow.set_entry_point("Professor")
-    
     workflow.add_edge("Professor", "Epistemic")
     
-    # Map 'Verifier' return to 'Verifier' node
     workflow.add_conditional_edges(
         "Epistemic", 
         check_epistemic_status, 
         {"Verifier": "Verifier", "Professor": "Professor"}
     )
     
-    # Map 'Physicist' return to 'Physicist' node
     workflow.add_conditional_edges(
         "Verifier", 
         check_verification_status, 
@@ -114,21 +112,27 @@ def build_agentic_graph():
     workflow.add_edge("Physicist", "Scientist")
     workflow.add_edge("Scientist", "Evaluator")
     
+    # The Decision Gate
     workflow.add_conditional_edges(
         "Evaluator", 
         check_execution_status, 
-        {"success_end": END, "max_retries_end": END, "analyze_failure": "Analyst"}
+        {
+            "success_end": END, 
+            "Saboteur": "Saboteur", 
+            "analyze_failure": "Analyst", 
+            "max_retries_end": END
+        }
     )
     
     workflow.add_edge("Analyst", "Scientist")
+    workflow.add_edge("Saboteur", END) # Saboteur finishes the loop
 
     return workflow.compile()
 
-# --------------------------------------------------------------
-# EXECUTION ENGINE
-# --------------------------------------------------------------
+# --- 6. EXECUTION ENGINE ---
 async def run_single_loop(graph, run_id: int, topic: str, semaphore: asyncio.Semaphore):
     async with semaphore:
+        await asyncio.sleep(random.uniform(2, 6)) # Jitter to avoid 429s
         print(f"\n>>> [RUN {run_id}] Domain: {topic} <<<")
         initial_state = {
             "iteration_count": 0, 
@@ -140,7 +144,7 @@ async def run_single_loop(graph, run_id: int, topic: str, semaphore: asyncio.Sem
             final_state = await graph.ainvoke(initial_state)
             harvest_training_data(final_state)
         except Exception as e:
-            print(f"[!] ENGINE FAILURE in Loop {run_id}: {e}")
+            print(f"[!] ENGINE FAILURE: {e}")
 
 async def main(chunk_index: int, total_chunks: int):
     app = build_agentic_graph()
@@ -151,14 +155,13 @@ async def main(chunk_index: int, total_chunks: int):
     end_idx = start_idx + chunk_size if chunk_index < total_chunks - 1 else len(active_curriculum)
     assigned_topics = active_curriculum[start_idx:end_idx]
     
-    semaphore = asyncio.Semaphore(2)
+    semaphore = asyncio.Semaphore(2) # Safe concurrency for Gemini Free
     
     tasks = [
         run_single_loop(app, start_idx + j, topic, semaphore) 
         for j, topic in enumerate(assigned_topics)
     ]
     
-    print(f"[*] Swarm Active. Chunk {chunk_index} processing {len(assigned_topics)} domains.")
     await asyncio.gather(*tasks, return_exceptions=True)
     print("\n[=== SWARM BATCH COMPLETE ===]")
 
@@ -168,14 +171,6 @@ if __name__ == "__main__":
     parser.add_argument("--total-chunks", type=int, default=1)
     args = parser.parse_args()
     
-    # Ensure directory exists with absolute certainty before starting
     os.makedirs("dataset", exist_ok=True)
-    
-    # Run the swarm
     asyncio.run(main(args.chunk, args.total_chunks))
-    
-    # NEW: Small sleep to ensure file buffers are flushed to disk 
-    # This prevents the Sanitizer from missing the raw data.
-    import time
-    print("[*] Flushing buffers and cooling down...")
-    time.sleep(5)
+    time.sleep(5) # Final cooldown

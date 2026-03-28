@@ -1,61 +1,73 @@
 import re
+import json
 from schemas.models import AgenticState
 from utils.llm_router import safe_async_invoke
-from memory.vector_store import retrieve_past_mistakes
+from memory.vector_store import retrieve_past_mistakes # Keep your memory!
 
 async def propose_solution(state: AgenticState) -> dict:
+    # 1. Increment Iteration
     iteration = state.get('iteration_count', 0) + 1
     print(f"\n--- [Layer 2] The Scientist is analyzing (Attempt {iteration}) ---")
     
     try:
-        # 1. Pull the full context from the Universal Data Bus
+        # 2. Extract context from the Universal Data Bus
         problem = state.get("problem_statement", "")
-        topic = state.get("current_topic", "General Engineering")
+        domain = state.get("domain", "General Engineering") # NEW Grounding
         target_lang = state.get("target_language", "C/Python")
         
-        # 2. Pull the constraints locked in by the Physicist
-        fundamental_laws = state.get("fundamental_laws", "Standard logical principles.")
+        # 3. Pull constraints from Physicist and Feedback from Analyst
+        laws = state.get("fundamental_laws", "Standard STEM Principles") # NEW Grounding
+        rca_feedback = state.get("audit_feedback", "None") # NEW: From the Analyst
         
-        # 3. Pull root cause analysis of past failures
+        # 4. Pull past failures from Vector Memory
         past_warnings = retrieve_past_mistakes(problem)
         
         system_prompt = f"""
-        Role: Elite STEM Problem Solver. 
-        Domain: {topic}
-        Target Output Format: {target_lang}
+        Role: Lead STEM Researcher in {domain}.
+        Expertise: Deep logical derivation and error-free implementation.
+        Target Output: {target_lang}
         
-        IMMUTABLE LAWS YOU MUST OBEY:
-        {fundamental_laws}
+        IMMUTABLE LAWS (Physicist's Constraints):
+        {laws}
         
+        PAST FAILURE LOGS (Avoid these patterns):
         {past_warnings}
         
-        Constraints:
-        1. Output ONLY the raw solution. DO NOT include conversational text like "Here is the solution."
-        2. If writing code, ensure it handles edge cases, memory safety, and constraints.
-        3. If writing a mathematical/physics proof, use clear formal notation (LaTeX is accepted).
+        PREVIOUS ATTEMPT FEEDBACK:
+        {rca_feedback}
+        
+        REASONING PROTOCOL:
+        You must start every response with a <think> block.
+        Inside:
+        1. Assumptions Check: Identify parameters.
+        2. Logical Derivation: Break the problem into atomic units.
+        3. Law Verification: Cross-reference logic against the IMMUTABLE LAWS.
+        
+        CONSTRAINTS:
+        - NO conversational filler.
+        - Start immediately with <think>.
+        - After </think>, provide the raw solution/code only.
         """
 
-        # Using standard dictionary format for messages which works universally across LangChain wrappers
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Solve:\n{problem}"}
+            {"role": "user", "content": f"Solve this problem using the Reasoning Protocol:\n{problem}"}
         ]
 
-        # Network Call (Using the Fast Lane router)
-        raw_solution = await safe_async_invoke(messages, temperature=0.4)
+        # 5. Network Call (Lane 1: Safe Lane)
+        raw_output = await safe_async_invoke(messages, temperature=0.4)
         
-        # Domain-Aware Markdown Destroyer
-        if target_lang == "Agnostic/Math" or "Physics" in topic:
-            # Do NOT strip markdown for Math/Physics to preserve LaTeX ($$, \begin{equation})
-            clean_solution = raw_solution.strip()
-        else:
-            # Aggressively strip backticks for raw Code
-            clean_solution = re.sub(r"^```[a-zA-Z]*\n", "", raw_solution, flags=re.MULTILINE)
-            clean_solution = re.sub(r"```\n?", "", clean_solution, flags=re.MULTILINE).strip()
+        # 6. Data Integrity Cleaning (Your original Regex logic)
+        clean_solution = raw_output.strip()
+        if target_lang != "Agnostic/Math" and "```" in clean_solution:
+            parts = clean_solution.split("```")
+            if len(parts) >= 2:
+                think_part = parts[0]
+                code_part = re.sub(r"^[a-zA-Z]*\n", "", parts[1])
+                clean_solution = f"{think_part}\n{code_part}".strip()
+
+        print("[*] Solution proposed with grounded reasoning. Routing to Constitutional Judge...")
         
-        print("[*] Solution proposed. Routing to Constitutional Judge...")
-        
-        # Return only the updated keys for LangGraph state management
         return {
             "proposed_code": clean_solution,
             "iteration_count": iteration
@@ -64,6 +76,6 @@ async def propose_solution(state: AgenticState) -> dict:
     except Exception as e:
         print(f"[!] Scientist Agent Failure: {e}")
         return {
-            "proposed_code": "# SYSTEM API FAILURE. Could not generate solution.",
+            "proposed_code": f"<think>\nAPI Error encountered.\n</think>\n# SYSTEM API FAILURE: {e}",
             "iteration_count": iteration
         }
