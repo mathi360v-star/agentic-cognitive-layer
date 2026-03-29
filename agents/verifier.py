@@ -1,84 +1,64 @@
 import json
 import re
-import asyncio
-from langchain_core.messages import SystemMessage, HumanMessage
 from schemas.models import AgenticState
-from utils.llm_router import heavy_async_invoke 
 
-async def node_verifier(state: AgenticState) -> AgenticState:
-    """The Gatekeeper. Ensures STEM problems are logically sound and properly tiered."""
-    print(f"\n--- [Layer 1.5] The Verifier is performing a High-IQ Audit on {state.get('domain', 'STEM')} ---")
+async def node_verifier(state: AgenticState, router):
+    """
+    V3 High-IQ Auditor: Performs an Epistemic Audit on the problem statement.
+    Uses the 'Heavy Lane' (70B+ models) for maximum logical rigor.
+    """
+    print(f"--- [Layer 1.5] Verifying {state.get('domain', 'STEM')} Problem ---")
     
-    problem = state.get("problem_statement", "").strip()
+    problem = state.get("problem_statement", "")
     domain = state.get("domain", "General Engineering")
-    tier = state.get("difficulty_tier", "Unknown")
+    tier = state.get("difficulty_tier", "Tier 1")
     
-    if not problem or len(problem) < 50:
-        print("[-] Verifier REJECTED: Problem statement is too shallow for reasoning.")
-        return {"problem_is_valid": False, "audit_feedback": "Problem statement too brief."}
-
+    # Safety Check: If the Professor output nothing, abort immediately
+    if not problem or len(problem) < 30:
+        return {"problem_is_valid": False, "audit_feedback": "Problem is empty or too brief."}
+    
+    prompt = f"""
+    Act as a Principal STEM Auditor. Perform a logic audit on this {tier} problem in {domain}.
+    
+    PROBLEM:
+    {problem}
+    
+    CRITERIA:
+    1. Are there contradictory constraints?
+    2. Is the goal clear and solvable?
+    3. Is the difficulty actually {tier}?
+    
+    Output ONLY a JSON object:
+    {{"is_valid": true/false, "reason": "Detailed explanation"}}
+    """
+    
     try:
-        # THE V3 STEM CONSTITUTION (AUDIT VERSION)
-        system_prompt = f"""
-        Role: Principal STEM Auditor for Frontier AI Training.
-        Expertise: {domain}
+        # We use 'heavy=True' to ensure Llama-3.3-70B or Gemini 2.0 handles the audit
+        raw = await router.invoke([{"role": "user", "content": prompt}], heavy=True)
         
-        Task: Perform an Epistemic Audit on the proposed {tier} problem.
-        
-        STRICT AUDIT RULES:
-        1. NO PARADOXES: The problem must not contain contradictory constraints (e.g., "Sort in O(1) time").
-        2. TIER ACCURACY: A {tier} problem must match that difficulty. If it's too easy, flag it.
-        3. GROUNDING: The problem must be solvable using fundamental laws of {domain}.
-        4. NO VAGUENESS: Variables and expected outputs must be explicitly defined.
-        
-        OUTPUT FORMAT (STRICT JSON ONLY):
-        {{
-            "is_valid": true/false,
-            "flaw_reasoning": "Detailed explanation if false, 'Valid' if true",
-            "suggested_tier": "Tier 1/2/3"
-        }}
-        """
-
-        human_prompt = f"Problem to Audit:\n{problem}\n\nTarget Domain: {domain}\nStated Tier: {tier}"
-
-        # LANE 2: We use the Heavy Router for guaranteed reasoning quality
-        raw_response = await heavy_async_invoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=human_prompt)
-        ], temperature=0.0)
-
-        # --- ENTERPRISE RECOVERY LOGIC ---
-        # 1. Strip markdown
-        clean_json = re.sub(r'```json\s*|\s*```', '', raw_response).strip()
-        # 2. Extract only the outermost JSON object
-        match = re.search(r'(\{.*\})', clean_json, re.DOTALL)
+        # Robust JSON Extraction
+        match = re.search(r'\{[\s\S]*\}', raw)
         if not match:
-            raise ValueError("No valid JSON structure identified.")
-        
-        parsed_data = json.loads(match.group(1))
-        
-        is_valid = parsed_data.get("is_valid", False)
-        feedback = parsed_data.get("flaw_reasoning", "Unknown error.")
-        actual_tier = parsed_data.get("suggested_tier", tier)
-
-        if is_valid:
-            print(f"[+] Verifier APPROVED {domain} ({actual_tier})")
-            return {
-                "problem_is_valid": True,
-                "audit_feedback": "Valid",
-                "difficulty_tier": actual_tier # Sync the tier to the actual complexity
-            }
-        else:
-            print(f"[-] Verifier REJECTED: {feedback}")
-            return {
-                "problem_is_valid": False,
-                "audit_feedback": feedback
-            }
+            raise ValueError("No JSON found in Verifier response")
             
-    except Exception as e:
-        # If the 70B model fails to output JSON, we retry once with a simpler prompt or fail
-        print(f"[!] Verifier Logic Error: {str(e)}. Defaulting to rejection.")
+        data = json.loads(match.group(0))
+        
+        is_valid = data.get("is_valid", False)
+        reason = data.get("reason", "No reason provided")
+        
+        if is_valid:
+            print(f"[+] Verifier APPROVED {domain} problem.")
+        else:
+            print(f"[-] Verifier REJECTED: {reason}")
+            
         return {
-            "problem_is_valid": False,
-            "audit_feedback": f"Verifier Syntax Error: {str(e)}"
+            "problem_is_valid": is_valid,
+            "audit_feedback": reason
+        }
+        
+    except Exception as e:
+        print(f"[!] Verifier System Error: {e}")
+        return {
+            "problem_is_valid": False, 
+            "audit_feedback": f"Verifier Parser Failure: {str(e)}"
         }

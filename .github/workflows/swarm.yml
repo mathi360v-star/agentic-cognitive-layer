@@ -1,24 +1,37 @@
-name: GH Swarm (Chunks 0-2)
+name: STEM Swarm V3 (Parallel Harvest)
 on:
-  workflow_dispatch: # MANUAL TRIGGER ONLY for QA testing phase
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '0 */6 * * *' # Optional: Run every 6 hours automatically
 
 jobs:
-  generate_and_stream:
+  swarm:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        chunk: [0, 1, 2] 
+        chunk: [0, 1, 2, 3, 4, 5] 
     steps:
       - uses: actions/checkout@v4
       
       - uses: actions/setup-python@v5
-        with: { python-version: '3.10' }
+        with: 
+          python-version: '3.10'
+          cache: 'pip' # Speeds up subsequent runs
         
-      - name: Install Dependencies
-        run: pip install langgraph langchain-core langchain-groq langchain-google-genai langchain-cohere langchain-openai langchain-mistralai pydantic chromadb tenacity huggingface_hub
+      - name: Install System Dependencies & Python Packages
+        run: |
+          # 1. Install C++ build tools required for ChromaDB
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3-dev
+          
+          # 2. Upgrade pip to ensure it can find binary wheels
+          python -m pip install --upgrade pip
+          
+          # 3. Install the manifest
+          pip install -r requirements.txt
         
-      - name: Execute Swarm Logic
+      - name: Execute Autonomous Reasoning Loop
         env:
           GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
           GOOGLE_API_KEYS: ${{ secrets.GOOGLE_API_KEYS }}
@@ -26,31 +39,14 @@ jobs:
           SAMBANOVA_API_KEYS: ${{ secrets.SAMBANOVA_API_KEYS }}
           MISTRAL_API_KEYS: ${{ secrets.MISTRAL_API_KEYS }}
         run: |
-          # Create dataset folder to ensure path exists
-          mkdir -p dataset
-          python main.py --chunk ${{ matrix.chunk }} --total-chunks 9
+          python main.py --chunk ${{ matrix.chunk }} --total-chunks 6
           python utils/sanitizer.py
 
-      - name: Direct-to-Vault Upload
+      - name: Stream to Hugging Face Vault
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
           CHUNK_ID: ${{ matrix.chunk }}
         run: |
-          # Wait for OS to sync file buffers to disk
-          sleep 5 
-          
-          # FIX: Robustly check for the SFT data stream produced by the new sanitizer
-          if [ -f "dataset/clean_sft_data.jsonl" ]; then
-            VALID_LINES=$(wc -l < dataset/clean_sft_data.jsonl)
-            
-            if [ "$VALID_LINES" -gt 0 ]; then
-              echo "[SYSTEM] Detected $VALID_LINES verified SFT traces. Initializing upload..."
-              # Calls Python uploader which handles BOTH SFT and DPO files
-              python utils/upload_to_hf.py
-            else
-              echo "[-] SFT file exists but is empty. Skipping upload."
-            fi
-          else
-            echo "[-] No SFT data file found at dataset/clean_sft_data.jsonl. Swarm likely failed."
-          fi
+          sleep $((RANDOM % 10 + 1)) 
+          python utils/upload_to_hf.py

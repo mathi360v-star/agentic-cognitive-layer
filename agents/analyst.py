@@ -1,28 +1,30 @@
-import json
+import uuid
 import re
 from schemas.models import AgenticState
-from utils.llm_router import safe_async_invoke 
-# Assuming you want to keep your RAG memory for Attempt 2
-from memory.vector_store import save_new_heuristic
+from utils.vector_vault import vault 
 
-async def analyze_failure(state: AgenticState) -> dict:
-    """Performs STEM Root Cause Analysis on logic, math, or physics failures."""
-    print("--- [Layer 4] The Analyst is performing STEM Root Cause Analysis ---")
+async def analyze_failure(state: AgenticState, router) -> dict:
+    """
+    Performs STEM-focused Root Cause Analysis.
+    Saves logical lessons to the Vector Vault to prevent repetitive hallucinations.
+    """
+    print("\n--- [Layer 4] The Analyst is performing STEM Root Cause Analysis ---")
     
-    # 1. Extraction from Universal Bus
+    # 1. Extraction from Universal Data Bus
     problem = state.get("problem_statement", "")
     failed_logic = state.get("proposed_code", "")
-    # Use audit_feedback or red_team_critique depending on which one was populated
-    judge_critique = state.get("audit_feedback", state.get("red_team_critique", "Logic error."))
-    laws = state.get("fundamental_laws", "Standard STEM Principles")
+    judge_critique = state.get("audit_feedback", "General logic failure.")
+    domain = state.get("domain", "STEM")
+    laws = state.get("fundamental_laws", "Standard Axioms")
     
-    # 2. The STEM Post-Mortem Prompt
+    # 2. The Logic-Grounded RCA Prompt
+    # We force the Analyst to identify the specific law or theorem violated.
     prompt = f"""
     You are a Formal Logic Analyst. A STEM solution has FAILED the Supreme Judge's audit.
     
-    DOMAIN: {state.get('domain', 'Engineering')}
+    DOMAIN: {domain}
     PROBLEM: {problem}
-    LAWS THAT MUST BE OBEYED: {laws}
+    GROUNDING LAWS: {laws}
     
     FAILED SOLUTION: 
     {failed_logic}
@@ -31,45 +33,46 @@ async def analyze_failure(state: AgenticState) -> dict:
     {judge_critique}
     
     TASK:
-    Identify exactly why the logic failed. Was it a mathematical contradiction? A violation of a physical law? Or a code-level bug?
+    Identify the 'Mechanical Failure' (Where exactly did the math or logic break?).
+    Provide a 'Generalized Rule' to ensure the Scientist does not repeat this error.
     
-    Output your analysis in this format:
-    FAILURE: [Point of logical breakdown]
-    RULE: [Specific instruction to the Scientist for the next attempt]
+    Format your response EXACTLY like this:
+    FAILURE: [Description of the specific logical or physical breakdown]
+    RULE: [Direct instruction for the next attempt]
     """
     
-    # Lane 1: Safe Router
-    rca_raw = await safe_async_invoke([{"role": "user", "content": prompt}])
+    # Lane 1: Use the standard router for the analysis
+    rca_raw = await router.invoke([{"role": "user", "content": prompt}], temperature=0.0)
     
-    # 3. Clean and Extract the Heuristic
-    failure_desc = rca_raw.split("RULE:")[0].replace("FAILURE:", "").strip()
-    rule_desc = rca_raw.split("RULE:")[-1].strip() if "RULE:" in rca_raw else "Refine logic against laws."
-
-    # 4. Memory Injection (ChromaDB Vector Store)
+    # 3. Memory Injection (The RAG Step)
+    # We save this to the Vector Vault so the Scientist can 'Search' for it in the future.
     try:
-        save_new_heuristic(
-            problem_statement=problem,
-            flawed_assumption=failure_desc,
-            generalized_rule=rule_desc
+        lesson_id = f"rca_{uuid.uuid4().hex[:8]}"
+        # We store the raw analysis so the Scientist gets the full context
+        vault.store_lesson(
+            lesson_text=f"Domain: {domain} | {rca_raw}", 
+            domain=domain
         )
+        print(f"[+] Memory embedded in Vector Vault: {lesson_id}")
     except Exception as e:
         print(f"[!] Vector Vault Sync Failed: {e}")
 
-    # 5. DPO Snapshot Construction
-    new_rca = {
+    # 4. State Update & DPO Snapshot
+    # This history allows the sanitizer to build 'Rejected' samples.
+    new_rca_entry = {
         "failed_code_snapshot": failed_logic,
-        "mechanical_failure": failure_desc,
-        "generalized_rule": rule_desc
+        "mechanical_failure": rca_raw.split("RULE:")[0].replace("FAILURE:", "").strip() if "RULE:" in rca_raw else rca_raw,
+        "generalized_rule": rca_raw.split("RULE:")[-1].strip() if "RULE:" in rca_raw else "Refine logic."
     }
     
-    # Update history and state
     history = state.get("rca_history", [])
     if history is None: history = []
-    history.append(new_rca)
+    history.append(new_rca_entry)
     
-    # Return to Bus
+    # 5. Return to the Bus
+    # We increment the iteration_count here to tell the graph how many attempts have passed.
     return {
         "rca_history": history, 
         "iteration_count": state.get("iteration_count", 0) + 1,
-        "audit_feedback": f"FAILURE ANALYSIS: {failure_desc}\nREQUIRED FIX: {rule_desc}"
+        "audit_feedback": f"RCA LOG: {rca_raw}" 
     }

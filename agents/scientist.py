@@ -1,10 +1,13 @@
 import re
-import json
 from schemas.models import AgenticState
-from utils.llm_router import safe_async_invoke
-from memory.vector_store import retrieve_past_mistakes # Keep your memory!
+from utils.vector_vault import vault  # Integrated Long-Term Memory
 
-async def propose_solution(state: AgenticState) -> dict:
+async def propose_solution(state: AgenticState, router) -> dict:
+    """
+    The Scientist Node: Derives the solution while grounded in Laws 
+    and Vector-Retrieved Memory (RAG).
+    """
+    
     # 1. Increment Iteration
     iteration = state.get('iteration_count', 0) + 1
     print(f"\n--- [Layer 2] The Scientist is analyzing (Attempt {iteration}) ---")
@@ -12,41 +15,43 @@ async def propose_solution(state: AgenticState) -> dict:
     try:
         # 2. Extract context from the Universal Data Bus
         problem = state.get("problem_statement", "")
-        domain = state.get("domain", "General Engineering") # NEW Grounding
+        domain = state.get("domain", "STEM") 
         target_lang = state.get("target_language", "C/Python")
         
-        # 3. Pull constraints from Physicist and Feedback from Analyst
-        laws = state.get("fundamental_laws", "Standard STEM Principles") # NEW Grounding
-        rca_feedback = state.get("audit_feedback", "None") # NEW: From the Analyst
+        # 3. Pull laws from Physicist and Feedback from Analyst/Judge
+        laws = state.get("fundamental_laws", "Standard STEM Principles")
+        rca_feedback = state.get("audit_feedback", "None") 
         
-        # 4. Pull past failures from Vector Memory
-        past_warnings = retrieve_past_mistakes(problem)
+        # 4. RAG-AUGMENTED REASONING: Pull past failures from the Vector Vault
+        # This prevents the model from repeating the same logical errors.
+        past_errors = vault.retrieve_lessons(problem, domain)
+        memory_context = "\n".join([f"- {err}" for err in past_errors]) if past_errors else "No previous similar failures recorded."
         
+        # 5. Build the Grounded System Prompt
         system_prompt = f"""
         Role: Lead STEM Researcher in {domain}.
         Expertise: Deep logical derivation and error-free implementation.
-        Target Output: {target_lang}
+        Target Output Format: {target_lang}
         
         IMMUTABLE LAWS (Physicist's Constraints):
         {laws}
         
-        PAST FAILURE LOGS (Avoid these patterns):
-        {past_warnings}
+        PAST FAILURE LOGS (CRITICAL: Avoid these specific mistakes):
+        {memory_context}
         
-        PREVIOUS ATTEMPT FEEDBACK:
+        PREVIOUS ATTEMPT FEEDBACK (Fix these specific errors):
         {rca_feedback}
         
         REASONING PROTOCOL:
         You must start every response with a <think> block.
         Inside:
-        1. Assumptions Check: Identify parameters.
-        2. Logical Derivation: Break the problem into atomic units.
-        3. Law Verification: Cross-reference logic against the IMMUTABLE LAWS.
+        1. Assumptions Check: Identify parameters and target constraints.
+        2. Logical Derivation: Break the problem into atomic units/steps.
+        3. Law Verification: Cross-reference every step against the IMMUTABLE LAWS.
         
         CONSTRAINTS:
-        - NO conversational filler.
-        - Start immediately with <think>.
-        - After </think>, provide the raw solution/code only.
+        - NO conversational filler. Start directly with <think>.
+        - After </think>, provide the raw solution or derivation only.
         """
 
         messages = [
@@ -54,17 +59,16 @@ async def propose_solution(state: AgenticState) -> dict:
             {"role": "user", "content": f"Solve this problem using the Reasoning Protocol:\n{problem}"}
         ]
 
-        # 5. Network Call (Lane 1: Safe Lane)
-        raw_output = await safe_async_invoke(messages, temperature=0.4)
+        # 6. Network Call (Using the Sharded Router for Lane 1)
+        raw_output = await router.invoke(messages, temperature=0.4)
         
-        # 6. Data Integrity Cleaning (Your original Regex logic)
+        # 7. Post-Processing Cleanup
         clean_solution = raw_output.strip()
+        
+        # If it's code, ensure we strip any markdown artifacts
         if target_lang != "Agnostic/Math" and "```" in clean_solution:
-            parts = clean_solution.split("```")
-            if len(parts) >= 2:
-                think_part = parts[0]
-                code_part = re.sub(r"^[a-zA-Z]*\n", "", parts[1])
-                clean_solution = f"{think_part}\n{code_part}".strip()
+            clean_solution = re.sub(r"```[a-zA-Z]*\n", "", clean_solution)
+            clean_solution = clean_solution.replace("```", "").strip()
 
         print("[*] Solution proposed with grounded reasoning. Routing to Constitutional Judge...")
         

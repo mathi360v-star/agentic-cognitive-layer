@@ -2,85 +2,79 @@ import json
 import re
 import os
 
-def clean_solution_block(solution: str, target_language: str) -> str:
-    if not solution: return ""
-    if target_language == "Agnostic/Math":
-        return solution.strip()
-    solution = re.sub(r"^```[a-zA-Z]*\n", "", solution, flags=re.MULTILINE)
-    solution = re.sub(r"^```\n?", "", solution, flags=re.MULTILINE)
-    return solution.strip()
+# --- [UPGRADE: CLEANING LOGIC] ---
+def clean_solution_block(text: str, target_lang: str = "C/Python") -> str:
+    """Strips markdown artifacts while preserving math/code integrity."""
+    if not text: return ""
+    
+    # If it's math/physics, we keep the formatting but trim whitespace
+    if target_lang == "Agnostic/Math":
+        return text.strip()
+        
+    # If it's code, we strip the ```python or ```c tags
+    text = re.sub(r"^```[a-zA-Z]*\n", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^```\n?", "", text, flags=re.MULTILINE)
+    return text.strip()
 
+# --- [UPGRADE: DUAL-STREAM EXTRACTION] ---
 def sanitize_dataset():
     print("\n--- [GATE 1] Hybrid-Density SFT & DPO Extraction ---")
     
+    # Use absolute paths to prevent "File Not Found" errors in GitHub Actions
     base_dir = os.getcwd()
-    RAW_DATA_PATH = os.path.join(base_dir, "dataset/training_traces.jsonl")
-    SFT_OUT = os.path.join(base_dir, "dataset/clean_sft_data.jsonl")
-    DPO_OUT = os.path.join(base_dir, "dataset/clean_dpo_data.jsonl")
-    
-    if not os.path.exists(RAW_DATA_PATH) or os.path.getsize(RAW_DATA_PATH) == 0:
-        print(f"[-] No raw data found. Skipping.")
-        open(SFT_OUT, 'w').close()
-        open(DPO_OUT, 'w').close()
-        return
+    raw_path = os.path.join(base_dir, "dataset/training_traces.jsonl")
+    sft_out = os.path.join(base_dir, "dataset/clean_sft.jsonl")
+    dpo_out = os.path.join(base_dir, "dataset/clean_dpo.jsonl")
 
+    if not os.path.exists(raw_path):
+        print(f"[-] No raw data found at {raw_path}. Skipping sanitization.")
+        return
+    
     sft_count = 0
     dpo_count = 0
 
-    with open(RAW_DATA_PATH, 'r', encoding='utf-8') as infile, \
-         open(SFT_OUT, 'w', encoding='utf-8') as sft_file, \
-         open(DPO_OUT, 'w', encoding='utf-8') as dpo_file:
+    with open(raw_path, 'r', encoding='utf-8') as f, \
+         open(sft_out, 'w', encoding='utf-8') as sft, \
+         open(dpo_out, 'w', encoding='utf-8') as dpo:
         
-        for line in infile:
+        for line in f:
             if not line.strip(): continue
+            
             try:
-                trace = json.loads(line)
+                data = json.loads(line)
                 
-                problem = trace.get("problem_statement", trace.get("problem", "")).strip()
-                final_code = trace.get("final_correct_code", "").strip()
-                laws = trace.get("fundamental_laws", "Standard STEM Principles").strip()
-                tier = trace.get("difficulty_tier", "Tier 1").strip()
-                rca_history = trace.get("rca_history", [])
-                target_lang = trace.get("target_language", "C/Python")
-                domain = trace.get("domain", "Engineering")
-
-                if not problem or not final_code or len(final_code) < 30:
+                # Extract and clean data
+                problem = data.get('problem', '').strip()
+                chosen = clean_solution_block(data.get('chosen', ''), data.get('target_language'))
+                rejected = clean_solution_block(data.get('rejected', ''), data.get('target_language'))
+                
+                # Integrity Check: Do not save empty or corrupted traces
+                if not problem or not chosen:
                     continue
 
-                clean_final = clean_solution_block(final_code, target_lang)
-
-                # --- UPDATED: THE SFT DATA (The "Gold" Answer) ---
-                sft_thought = f"Difficulty: {tier}\nLaws Applied: {laws}\n"
-                if rca_history:
-                    sft_thought += f"Self-Correction: {rca_history[-1].get('generalized_rule', 'Refined logic')}"
-                
-                # REPLACEMENT POINT: Added System/User Structure
-                sft_json = {
-                    "instruction": f"SYSTEM: You are an expert in {domain}. Difficulty: {tier}.\nUSER: {problem}",
-                    "output": f"<think>\n{sft_thought}\n</think>\n\n{clean_final}"
+                # 1. SFT Stream (Supervised Fine-Tuning - "The Gold Standard")
+                sft_entry = {
+                    "instruction": problem,
+                    "output": chosen
                 }
-                sft_file.write(json.dumps(sft_json) + "\n")
+                sft.write(json.dumps(sft_entry) + "\n")
                 sft_count += 1
 
-                # --- UPDATED: THE DPO DATA (The "Preference" Pair) ---
-                if rca_history:
-                    raw_fail = rca_history[0].get("failed_code_snapshot", "")
-                    clean_fail = clean_solution_block(raw_fail, target_lang)
+                # 2. DPO Stream (Preference Optimization - "Right vs Wrong")
+                if rejected and len(rejected) > 10:
+                    dpo_entry = {
+                        "prompt": problem,
+                        "chosen": chosen,
+                        "rejected": rejected
+                    }
+                    dpo.write(json.dumps(dpo_entry) + "\n")
+                    dpo_count += 1
                     
-                    if clean_fail and len(clean_fail) > 10:
-                        dpo_json = {
-                            # Consistent System/User Structure for DPO
-                            "prompt": f"SYSTEM: You are an expert in {domain}. Difficulty: {tier}.\nUSER: {problem}",
-                            "chosen": f"<think>\nVerification against laws: {laws}\nCorrection: {rca_history[0].get('generalized_rule', '')}\n</think>\n\n{clean_final}",
-                            "rejected": f"<think>\nInitial approach assuming standard patterns...\n</think>\n\n{clean_fail}"
-                        }
-                        dpo_file.write(json.dumps(dpo_json) + "\n")
-                        dpo_count += 1
-                
             except Exception as e:
+                print(f"[!] Sanitizer Trace Error: {e}")
                 continue
 
-    print(f"[+] Extraction Complete. SFT: {sft_count} | DPO: {dpo_count}")
+    print(f"[+] Extraction Complete: {sft_count} SFT samples | {dpo_count} DPO pairs.")
 
 if __name__ == "__main__":
     sanitize_dataset()
