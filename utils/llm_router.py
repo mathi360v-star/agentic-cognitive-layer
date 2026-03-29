@@ -15,6 +15,7 @@ class ShardedRouter:
     def _get_shard(self, env_var):
         keys = [k.strip() for k in os.getenv(env_var, "").split(",") if k.strip()]
         if not keys: return []
+        # Distribute keys across chunks
         size = max(1, len(keys) // self.total_chunks)
         start = self.chunk_id * size
         return keys[start : start + size]
@@ -31,22 +32,26 @@ class ShardedRouter:
 
     @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=2, min=4, max=20))
     async def invoke(self, messages, temperature=0.2, heavy=False):
-        # Filter for heavy lane if needed
+        # Heavy lane uses only 70B+ models
         candidates = [i for i in self.pool if not heavy or i["provider"] in ["groq", "google", "cohere"]]
+        if not candidates: candidates = self.pool # Fallback
         random.shuffle(candidates)
         
         for item in candidates:
             async with self.locks[item["provider"]]:
-                # Jitter & Rate Limit Enforcement
-                cooldown = 5.0 if heavy else 2.5
+                # STRICT COOLDOWN: 6 seconds for heavy, 3 seconds for safe
+                cooldown = 6.0 if heavy else 3.0
                 elapsed = time.time() - self.last_call[item["provider"]]
-                if elapsed < cooldown: await asyncio.sleep(cooldown - elapsed + random.uniform(0, 1))
+                if elapsed < cooldown:
+                    await asyncio.sleep(cooldown - elapsed + random.uniform(0.5, 1.5))
                 
                 try:
                     res = await item["llm"].ainvoke(messages, temperature=temperature)
                     self.last_call[item["provider"]] = time.time()
                     return res.content
                 except Exception as e:
-                    if "429" in str(e): continue
+                    if "429" in str(e):
+                        print(f"[!] Shard {self.chunk_id}: {item['provider']} Rate Limited. Retrying with next key...")
+                        continue
                     raise e
-        raise RuntimeError(f"Shard {self.chunk_id} exhausted.")
+        raise RuntimeError(f"Shard {self.chunk_id}: All keys exhausted or 429.")
