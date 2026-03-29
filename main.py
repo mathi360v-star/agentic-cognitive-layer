@@ -17,26 +17,51 @@ from agents.saboteur import node_saboteur
 def build_agentic_graph(router: ShardedRouter):
     workflow = StateGraph(AgenticState)
 
-    # --- NODE WRAPPER: Fixes the 'missing 1 required positional argument' error ---
-    async def wrap_node(func, state):
-        # This ensures the router is passed but the graph only sees (state)
-        return await func(state, router)
+    # --- THE FIX: Proper Async Node Factory ---
+    # We define local async functions so LangGraph can properly await them.
+    async def professor_node(state: AgenticState):
+        return await generate_curriculum(state, router)
 
-    # 1. Register Nodes
-    workflow.add_node("Professor", lambda s: wrap_node(generate_curriculum, s))
-    workflow.add_node("Epistemic", lambda s: wrap_node(node_epistemic_evaluator, s))
-    workflow.add_node("Verifier", lambda s: wrap_node(node_verifier, s))
-    workflow.add_node("Physicist", lambda s: wrap_node(node_physicist, s))
-    workflow.add_node("Scientist", lambda s: wrap_node(propose_solution, s))
-    workflow.add_node("Evaluator", lambda s: wrap_node(evaluate_code, s))
-    workflow.add_node("Analyst", lambda s: wrap_node(analyze_failure, s))
-    workflow.add_node("Saboteur", lambda s: wrap_node(node_saboteur, s))
+    async def epistemic_node(state: AgenticState):
+        return await node_epistemic_evaluator(state, router)
+
+    async def verifier_node(state: AgenticState):
+        return await node_verifier(state, router)
+
+    async def physicist_node(state: AgenticState):
+        return await node_physicist(state, router)
+
+    async def scientist_node(state: AgenticState):
+        return await propose_solution(state, router)
+
+    async def evaluator_node(state: AgenticState):
+        return await evaluate_code(state, router)
+
+    async def analyst_node(state: AgenticState):
+        return await analyze_failure(state, router)
+
+    async def saboteur_node(state: AgenticState):
+        return await node_saboteur(state, router)
+
+    # 1. Register Nodes using the new async wrappers
+    workflow.add_node("Professor", professor_node)
+    workflow.add_node("Epistemic", epistemic_node)
+    workflow.add_node("Verifier", verifier_node)
+    workflow.add_node("Physicist", physicist_node)
+    workflow.add_node("Scientist", scientist_node)
+    workflow.add_node("Evaluator", evaluator_node)
+    workflow.add_node("Analyst", analyst_node)
+    workflow.add_node("Saboteur", saboteur_node)
 
     # 2. Logic Gates (The Safety Circuit)
     def check_safety_and_solvability(state: AgenticState):
         steps = state.get("total_graph_steps", 0)
+        # Update state count
         state["total_graph_steps"] = steps + 1
-        if steps >= 15: return "END"
+        
+        if steps >= 15: 
+            print("!!! CIRCUIT BREAKER: Swarm Aborted !!!")
+            return "END"
         if not state.get("problem_is_valid"): return "Professor"
         return "Verifier"
 
@@ -53,19 +78,25 @@ def build_agentic_graph(router: ShardedRouter):
     # 3. Define Flow
     workflow.set_entry_point("Professor")
     workflow.add_edge("Professor", "Epistemic")
+    
     workflow.add_conditional_edges("Epistemic", check_safety_and_solvability, 
                                   {"Verifier": "Verifier", "Professor": "Professor", "END": END})
+    
     workflow.add_conditional_edges("Verifier", check_audit_status, 
                                   {"Physicist": "Physicist", "Professor": "Professor"})
+    
     workflow.add_edge("Physicist", "Scientist")
     workflow.add_edge("Scientist", "Evaluator")
+    
     workflow.add_conditional_edges("Evaluator", check_execution, 
                                   {"Saboteur": "Saboteur", "Analyst": "Analyst", "END": END})
+    
     workflow.add_edge("Analyst", "Scientist")
     workflow.add_edge("Saboteur", END)
 
     return workflow.compile()
 
+# --- ATOMIC DATA HARVESTING ---
 def harvest_data(state: AgenticState):
     if state.get("execution_success") and state.get("final_correct_code"):
         trace = {
@@ -80,7 +111,7 @@ def harvest_data(state: AgenticState):
         with open("dataset/training_traces.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(trace) + "\n")
             f.flush()
-            os.fsync(f.fileno()) # ATOMIC WRITE
+            os.fsync(f.fileno())
 
 async def run_swarm_loop(graph, topic, semaphore):
     async with semaphore:
@@ -90,6 +121,7 @@ async def run_swarm_loop(graph, topic, semaphore):
             "total_graph_steps": 0, "rca_history": [], "problem_is_valid": False
         }
         try:
+            # We must use .ainvoke for the async graph
             final_state = await graph.ainvoke(initial_state)
             harvest_data(final_state)
         except Exception as e:
@@ -101,16 +133,14 @@ async def main():
     parser.add_argument("--total-chunks", type=int, default=6)
     args = parser.parse_args()
 
+    # Create the router once
     router = ShardedRouter(args.chunk, args.total_chunks)
     app = build_agentic_graph(router)
     
-    # MASTER CURRICULUM
-    domains = [
-        "Advanced Engineering", "Applied Physics", 
-        "Computational Logic", "Embedded Systems"
-    ]
+    # Curriculum domains
+    domains = ["Advanced Engineering", "Applied Physics", "Computational Logic", "Embedded Systems"]
     
-    # STRATEGY: Use Semaphore(1) to avoid 429 exhaustion on the free tier
+    # FREE TIER STRATEGY: One at a time to avoid 429 burnout
     semaphore = asyncio.Semaphore(1)
     tasks = [run_swarm_loop(app, d, semaphore) for d in domains]
     
